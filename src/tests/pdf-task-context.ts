@@ -81,12 +81,13 @@ function capabilities(root: string): AgentCapabilityContext {
   const context: AgentCapabilityContext = { settings, agentId: "pdf-only", vaultRoot: root, resources: [], proAccess: paidTestAccess,
     access: { permission: "workspace-write", mode: "agent", memoryMode: "normal" } };
   const target = (reading: boolean, summary: boolean) => ({ originalPath: "Raw/original.pdf", rawDirectory: "Raw", options: { reading, summary, translation: true } });
-  assert.equal(checkAgentCapability(context, "knowledge").reason, "agent_disabled", "dedicated Knowledge tools need their own grant");
+  // 2026-11-25: Knowledge work is built into every non-expert Agent; legacy opt-outs no longer narrow it.
+  assert.equal(checkAgentCapability(context, "knowledge").allowed, true, "Knowledge tools need no separate grant");
   assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(true, false)).allowed, true, "PDF findings use ordinary notebook write access");
   pdfAgent.disabledCapabilityIds = ["knowledge"];
   assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(false, false)).allowed, true, "PDF-only Agent can extract or translate without general Knowledge writes");
-  assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(true, false)).reason, "agent_disabled");
-  assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(false, true)).reason, "agent_disabled");
+  assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(true, false)).allowed, true, "a legacy Knowledge opt-out no longer blocks PDF findings");
+  assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(false, true)).allowed, true);
   const off = structuredClone(settings); off.pdfReading.enabled = false;
   assert.equal(checkAgentTool({ ...context, settings: off }, "pdf_reading_process", {}, target(false, false)).reason, "module_disabled");
   assert.equal(checkAgentTool({ ...context, proAccess: unavailableCapabilityAccess }, "pdf_reading_process", {}, target(false, false)).reason, "pro_required");

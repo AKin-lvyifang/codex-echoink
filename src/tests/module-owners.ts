@@ -35,30 +35,31 @@ export function runModuleOwnerTests(): void {
   const todoSettings = normalizeSettingsData(null).settings;
   todoSettings.lifestyle.finance.enabled = true;
   const kinds = (pro: boolean) => workbenchSetupTodos(todoSettings, pro).map(item => item.kind);
-  assert.deepEqual(kinds(false), ["knowledge", "model", "persona"], "a new install only needs setup and an optional persona");
+  assert.deepEqual(kinds(false), ["knowledge", "model"], "a new install only needs setup");
+  // 2026-11-25: owners still route each module's work, so unowned modules stay a reminder; the generalist persona reminder is gone.
   todoSettings.agentRegistry = setModuleOwner(setModuleOwner(todoSettings.agentRegistry, "journal", ""), "finance", "");
   todoSettings.lifestyle.finance.enabled = false;
   assert.ok(!workbenchSetupTodos(todoSettings, true).find(item => item.kind === "owners")?.moduleIds.includes("finance"), "turned-off modules are not counted");
   todoSettings.lifestyle.finance.enabled = true;
-  const free = workbenchSetupTodos(todoSettings, false);
-  assert.deepEqual(free.find(item => item.kind === "owners")?.moduleIds, ["journal"], "free users are not reminded about PRO modules");
+  assert.deepEqual(workbenchSetupTodos(todoSettings, false).find(item => item.kind === "owners")?.moduleIds, ["journal"], "free users are not reminded about PRO modules");
   assert.deepEqual(workbenchSetupTodos(todoSettings, true).find(item => item.kind === "owners")?.moduleIds, ["journal", "finance"], "unowned modules merge into one row");
   todoSettings.agentRegistry = setModuleOwner(todoSettings.agentRegistry, "knowledge-base", "");
   assert.ok(kinds(false).includes("knowledge-owner"), "auto-link pause is said out loud");
   todoSettings.knowledgeBase.autoLinkEnabled = false;
   assert.deepEqual(workbenchSetupTodos(todoSettings, false).find(item => item.kind === "owners")?.moduleIds, ["journal", "knowledge-base"]);
   const owners = workbenchSetupTodos(todoSettings, false).find(item => item.kind === "owners")!;
-  todoSettings.setup.setupTodoDismissed = { owners: owners.signature, persona: "persona" };
-  assert.ok(!kinds(false).includes("owners") && !kinds(false).includes("persona"), "dismissed items stay hidden");
+  todoSettings.setup.setupTodoDismissed = { owners: owners.signature, model: "model" };
+  assert.ok(!kinds(false).includes("owners") && !kinds(false).includes("model"), "dismissed items stay hidden");
   todoSettings.agentRegistry = setModuleOwner(todoSettings.agentRegistry, "todos", "");
   assert.ok(kinds(false).includes("owners"), "a changed owners row returns after dismissal");
+  todoSettings.setup.setupTodoDismissed = {};
+  for (const id of ["journal", "finance", "knowledge-base", "todos"] as const) todoSettings.agentRegistry = setModuleOwner(todoSettings.agentRegistry, id, "generalist");
   const expert = { id: "expert-bookkeeper", name: "记账专家", avatar: { kind: "default" as const }, position: "", styleId: "execution" as const, kind: "expert" as const,
     expert: { expertId: "bookkeeper", hired: true, packageVersion: "1", summary: "", disclosureShown: true, events: [] } };
   todoSettings.agentRegistry = { ...todoSettings.agentRegistry, agents: [...todoSettings.agentRegistry.agents, expert], moduleOwners: { ...todoSettings.agentRegistry.moduleOwners, finance: expert.id } };
   assert.deepEqual(workbenchSetupTodos(todoSettings, false).filter(item => item.kind === "pro-owner").map(item => [item.moduleIds[0], item.agentName]), [["finance", "记账专家"]], "an expert owner without PRO asks for renewal");
   assert.ok(!workbenchSetupTodos(todoSettings, true).some(item => item.kind === "pro-owner"));
-  todoSettings.agentRegistry.agents.find(agent => agent.id === "generalist")!.persona = "写日记先问我最在意的事";
-  todoSettings.setup.setupTodoDismissed = {};
-  assert.ok(!kinds(false).includes("persona"), "writing the persona clears the reminder");
+  todoSettings.setup.setupTodoDismissed = { "pro-owner:finance": expert.id };
+  assert.ok(!kinds(false).includes("pro-owner"), "a dismissed renewal reminder stays hidden for the same owner");
   console.log("module owners: new install, both settings loaders, legacy migration, restart, capability grant and deletion passed");
 }

@@ -1,4 +1,5 @@
 import { CAUSE } from "../../core/error-copy";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "../../home/module-actions";
 import { FinanceWorkspace } from "../../lifestyle/finance-view";
 import type { LifestyleViewPort } from "../../lifestyle/host";
 import type { IPhonePageContext } from "./workbench-contract";
@@ -21,12 +22,14 @@ export async function openIPhoneFinance(ctx: IPhonePageContext): Promise<void> {
   const ownerLabel = () => {
     if (!view.alive) return;
     const owner = ctx.host.services.modules.owner("finance");
-    handoff.querySelector(".ip-button-visible")?.replaceChildren(iphoneAvatar(ctx.document, owner), el(ctx.document, "span", "", moduleText(ctx, `交给${owner.name.trim()}`, `Ask ${owner.name}`)));
+    handoff.querySelector(".ip-button-visible")?.replaceChildren(iphoneAvatar(ctx.document, owner), el(ctx.document, "span", "", moduleOwnerActionLabel("finance", { english: ctx.host.settings().settingsLanguage === "en", month: workspace.getSelectedMonth() })));
   };
   ownerLabel(); view.cleanup(ctx.host.workbench.subscribe(ownerLabel));
+  // 按钮写的是所选月份；月份在页面内点击切换，点击后同步一次。
+  body.addEventListener("click", () => { void Promise.resolve().then(ownerLabel); });
   async function send(replaceDraft: boolean): Promise<void> {
     await view.run(async () => {
-      const result = await ctx.host.services.modules.handoff("finance", `帮我看看 ${workspace.getSelectedMonth()} 的收支和预算`, replaceDraft);
+      const result = await ctx.host.services.modules.handoff("finance", moduleOwnerActionPrompt("finance", { english: ctx.host.settings().settingsLanguage === "en", month: workspace.getSelectedMonth() }), replaceDraft);
       if (!view.alive) return;
       if (result.conflict) view.confirm(view.content, "已有未发送的内容，是否替换？", "替换草稿", () => send(true));
       else { view.allow(); view.busy = false; await ctx.navigate({ kind: "agent", agentId: result.agentId }); }

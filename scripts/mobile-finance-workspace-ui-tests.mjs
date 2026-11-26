@@ -85,10 +85,10 @@ export async function runMobileFinanceWorkspaceUiTests(device) {
     assert.deepEqual([...current().querySelectorAll('[role="tab"]')].map(node => node.firstElementChild.nextSibling.textContent), ["总览", "明细", "计划", "报告"]);
     assert.equal(current().querySelector('.ip-finance-summary,.pd-finance-summary,input[type="month"]'), null);
     assert.ok(current().querySelector(".echoink-finance-rank-row")); assert.ok(current().querySelector(".echoink-finance-day-grid"));
-    assert.ok(findButton("交给真实负责人")); ownerName = "新负责人"; ownerEvents.emit(); assert.ok(findButton("交给新负责人"));
-    await click("交给新负责人"); assert.equal(calls.handoff.at(-1).replaceDraft, false); assert.equal(calls.navigate.length, 0); await click("替换草稿"); assert.equal(calls.handoff.at(-1).replaceDraft, true); assert.equal(calls.navigate.at(-1).agentId, "owner");
+    assert.ok(findButton("分析 10 月收支")); ownerName = "新负责人"; ownerEvents.emit(); assert.ok(findButton("分析 10 月收支"));
+    await click("分析 10 月收支"); assert.match(calls.handoff.at(-1).prompt, /^分析 \d{4}-10 的收支与预算执行情况$/u); assert.equal(calls.handoff.at(-1).replaceDraft, false); assert.equal(calls.navigate.length, 0); await click("替换草稿"); assert.equal(calls.handoff.at(-1).replaceDraft, true); assert.equal(calls.navigate.at(-1).agentId, "owner");
     await animateNumbers(); assert.ok(current().querySelector("echoink-finance-number-flow-v023")); assert.ok(animationCount > 0, "official digit animations are executed");
-    await click("下一个月"); assert.match(current().querySelector(".echoink-finance-month").textContent, /2026 年 11 月/); await click("上一个月");
+    await click("下一个月"); assert.match(current().querySelector(".echoink-finance-month").textContent, /2026 年 11 月/); await tick(); assert.ok(findButton("分析 11 月收支"), `${device}: the owner action follows the selected month`); await click("上一个月");
     await tab("明细"); assert.equal(current().querySelectorAll(".echoink-finance-ledger-list .echoink-finance-transaction").length, 20); await click("下一页"); assert.equal(current().querySelector('[aria-current="page"]').textContent, "2");
     const original = current(), originalWorkspace = current().querySelector(".echoink-finance-workspace"), viewport = current().querySelector(".echoink-lifestyle-view"); assert.ok(viewport.classList.contains("echoink-mobile-finance"), "the original mobile compact controls and 16px input family are active"); viewport.scrollTop = 312;
     await click("设置"); assert.equal(current().querySelector(".echoink-lifestyle-view,.echoink-mobile-finance,.ip-finance-viewport,.pd-finance-viewport"), null, "nested settings has no finance viewport classes"); assert.equal(shell.activePageId, device === "iphone" ? "iphone-settings-finance" : "ipad-finance-settings");

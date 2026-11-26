@@ -72,7 +72,7 @@ export function normalizeExpertAgentState(value: unknown): ExpertAgentState | un
     ...(typeof raw.lastConversationId === "string" && raw.lastConversationId ? { lastConversationId: raw.lastConversationId } : {}), events };
 }
 
-const EXPERT_LOCK_FIELDS = ["id", "position", "positionDescription", "styleId", "persona", "kind", "expert", "companyApprovalMode", "companyFolderGrants"] as const;
+const EXPERT_LOCK_FIELDS = ["id", "position", "positionDescription", "styleId", "persona", "kind", "expert", "companyApprovalMode"] as const;
 function canonical(value: unknown): string | undefined {
   return JSON.stringify(value, (_key, entry: unknown) => entry && typeof entry === "object" && !Array.isArray(entry)
     ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);

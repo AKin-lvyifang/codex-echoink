@@ -2853,6 +2853,8 @@ export class PiNativeConversationRuntime {
       abortErrors.push(error);
     }
     try {
+      // clearQueue emits queue_update, whose persistence is scheduled from the event lane.
+      await active.eventLane;
       await active.queuePersistenceLane;
     } catch (error) {
       abortErrors.push(error);
@@ -7393,6 +7395,7 @@ function runIdentity(run: Readonly<PiProductRunRecord>): PiChatUiRunIdentity {
   return {
     productRunId: run.productRunId,
     ...(run.interruption?.reason === "tool_loop_limit" ? { interruptionReason: "tool_loop_limit" as const } : {}),
+    ...(run.interruption?.reason === "watchdog" ? { watchdogStoppedAt: run.interruption.at } : {}),
     userEntryId: run.userEntryId,
     assistantEntryId: run.assistantEntryId,
     toolCallIds: run.toolCallIds,

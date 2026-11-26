@@ -116,6 +116,7 @@ export interface CreatePiVaultToolSecurityAdapterOptions {
   readonly additionalToolSecurity?: PiVaultAdditionalToolSecurityPort;
   /** Dynamic declared-readonly MCP Tools use that same sole Extension. */
   readonly additionalToolSecurities?: readonly PiVaultAdditionalToolSecurityPort[];
+  readonly obsidianReadSignal?: (toolCallId: string) => AbortSignal | undefined;
 }
 
 export interface PiVaultAdditionalToolSecurityPort {
@@ -174,7 +175,7 @@ implements PiVaultToolExecutionSecurityPort {
       hidden: true,
       factory: (pi) => {
         pi.on("tool_call", async (event, ctx) =>
-          await this.handleToolCall(event, ctx.signal));
+          await this.handleToolCall(event, (event.toolName === "obsidian_cli" ? this.options.obsidianReadSignal?.(event.toolCallId) : undefined) ?? ctx.signal));
         pi.on("tool_result", async (event) =>
           await this.handleToolResult(event));
       }
@@ -224,7 +225,7 @@ implements PiVaultToolExecutionSecurityPort {
     const deny = (reason: string) => {
       const decision = piToolAccessFailure(new Error(reason));
       const detail = decision.reason;
-      this.blockedCalls.set(event.toolCallId, detail);
+      if (!signal?.aborted) this.blockedCalls.set(event.toolCallId, detail);
       return block(detail);
     };
     if (this.options.isToolAllowed) {
@@ -239,6 +240,7 @@ implements PiVaultToolExecutionSecurityPort {
       }
     }
     if (!isPiVaultToolId(event.toolName)) {
+      if (event.toolName === "obsidian_cli" && signal?.aborted) return block("obsidian_cli_cancelled");
       const additionalSecurity = this.additionalToolSecurities.find((security) =>
         additionalToolSecurityHandles(security, event.toolName));
       if (additionalSecurity) {

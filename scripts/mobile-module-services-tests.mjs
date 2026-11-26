@@ -283,17 +283,18 @@ await test("finance transcripts without original M4 intent remain unknown and ca
 await test("Agent capability revocation inside actual Vault.process prevents a ledger patch", async () => {
   const f = await fixture(), created = await financeRun(f, "seed-run", "记一笔早餐12元"); await call(created, "finance_record", "seed", { action: "create", record: { amountCents: 1200, category: "餐饮", description: "早餐" } });
   const before = (await f.services.modules.finance.service.readForConversation()).records[0], tools = await financeRun(f, "patch-run", "把这笔早餐修改为15元"), process = f.app.vault.process.bind(f.app.vault);
-  let revoked = false; f.app.vault.process = async (file, change) => process(file, text => { if (file.path === before.path) { f.settings.agentRegistry.agents[0].disabledCapabilityIds = ["finance"]; revoked = true; } return change(text); });
+  let revoked = false; f.app.vault.process = async (file, change) => process(file, text => { if (file.path === before.path) { f.settings.lifestyle.finance.enabled = false; revoked = true; } return change(text); });
   await assert.rejects(call(tools, "finance_record", "patch-revoked", { action: "update", targets: [{ id: before.entry.id, expectedVersion: before.version }], patch: { amountCents: 1500 } }));
-  assert.equal(revoked, true); assert.equal((await f.services.modules.finance.service.readForConversation()).records[0].version, before.version); await f.release();
+  f.settings.lifestyle.finance.enabled = true; assert.equal(revoked, true); assert.equal((await f.services.modules.finance.service.readForConversation()).records[0].version, before.version); await f.release();
 });
 await test("batch interruption keeps a partial financial result uncertain and prevents replay", async () => {
   const f = await fixture(), create = await financeRun(f, "batch-seed", "记一笔早餐12元");
   await call(create, "finance_record", "first", { action: "create", record: { amountCents: 1200, category: "餐饮", description: "早餐" } });
   const second = await financeRun(f, "second-seed", "记一笔晚餐20元"); await call(second, "finance_record", "second", { action: "create", record: { amountCents: 2000, category: "餐饮", description: "晚餐" } });
   const before = (await f.services.modules.finance.service.readForConversation()).records, tools = await financeRun(f, "batch-update", "把这两笔全部修改为15元"), modify = f.app.vault.modify.bind(f.app.vault); let changed = 0;
-  f.app.vault.modify = async (file, text) => { await modify(file, text); if (before.some(row => row.path === file.path) && ++changed === 1) f.settings.agentRegistry.agents[0].disabledCapabilityIds = ["finance"]; };
+  f.app.vault.modify = async (file, text) => { await modify(file, text); if (before.some(row => row.path === file.path) && ++changed === 1) f.settings.lifestyle.finance.enabled = false; };
   await assert.rejects(call(tools, "finance_record", "batch", { action: "update", targets: before.map(row => ({ id: row.entry.id, expectedVersion: row.version })), patch: { amountCents: 1500 } }));
+  f.settings.lifestyle.finance.enabled = true;
   const after = (await f.services.modules.finance.service.readForConversation()).records; assert.equal(after.filter(row => row.entry.amountCents === 1500).length, 1); assert.equal(f.store.session.operations.at(-1).status, "uncertain");
   const resume = await inspectMobileTaskResume(f.app, f.store, f.store.session.id, undefined, f.services.modules.finance.service); assert.ok(resume.issues.some(issue => issue.status === "unknown")); await f.release();
 });

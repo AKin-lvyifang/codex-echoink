@@ -89,7 +89,7 @@ export async function runJournalPageTests(root: string): Promise<void> {
   obsidian.openTestModals.at(-1).close(); assert.equal(writes, 0, "Cancelling the original template picker writes nothing");
   let releaseOwner!: () => void;
   const ownerFlight = new Promise<void>(resolve => { releaseOwner = resolve; });
-  plugin.openAgentTaskList = async (id: string, text: string) => { assert.equal(id, "new-owner"); assert.equal(text, "聊聊今天"); prefills++; await ownerFlight; return true; };
+  plugin.openAgentTaskList = async (id: string, text: string) => { assert.equal(id, "new-owner"); assert.equal(text, "回顾今日并整理成日记"); prefills++; await ownerFlight; return true; };
   plugin.settings.agentRegistry.agents.push({ id: "new-owner", name: "新负责人" }); plugin.settings.agentRegistry.moduleOwners.journal = "new-owner";
   const owner = view.field("owner") as HTMLButtonElement; owner.click(); owner.click();
   assert.equal(prefills, 1); assert.equal(owner.disabled, true); assert.equal(owner.getAttribute("aria-busy"), "true");

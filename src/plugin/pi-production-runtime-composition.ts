@@ -2729,6 +2729,7 @@ async function createProductionAgentSession(input: {
   }) : undefined;
   const workspaceTools = workspaceSecurity ? createPiWorkspaceToolDefinitions(workspaceSecurity) : [];
   const security = createPiVaultToolSecurityAdapter({
+    obsidianReadSignal: id => obsidianSecurity.readDeadline.signalForCall(id),
     isToolAllowed: async (toolName, args) => {
       try { await assertToolAllowed(toolName, args ?? {}); } catch (error) { return piToolAccessFailure(error); }
       const access = input.input.currentWorkspaceAccess?.();
@@ -3226,8 +3227,10 @@ async function createProductionAgentSession(input: {
     thinkingLevel: configured.reasoning ? "medium" : "off",
     settingsManager,
     resourceLoader,
-    ...toolRegistration
+    ...toolRegistration,
+    customTools: toolRegistration.customTools?.map(tool => obsidianSecurity.readDeadline.wrapTool(tool))
   });
+  obsidianSecurity.readDeadline.install(created.session.agent);
   installPiMidrunCompaction({
     session: created.session,
     codingAgentVersion: VERSION,

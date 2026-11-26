@@ -1,10 +1,10 @@
 import { getModuleOwner } from "../agents/registry";
 import { isExpertAgent } from "../agents/persona";
-import { AGENT_MODULE_IDS, GENERALIST_AGENT_ID, type AgentModuleId } from "../agents/types";
+import { AGENT_MODULE_IDS, type AgentModuleId } from "../agents/types";
 import type { CodexForObsidianSettings } from "../settings/settings";
 import { onboardingDirectoriesReady, onboardingModelReady } from "../settings/onboarding-setup-status";
 
-export type WorkbenchSetupTodoKind = "model" | "knowledge" | "knowledge-owner" | "owners" | "pro-owner" | "persona";
+export type WorkbenchSetupTodoKind = "model" | "knowledge" | "knowledge-owner" | "owners" | "pro-owner";
 export interface WorkbenchSetupTodo {
   kind: WorkbenchSetupTodoKind;
   /** Stable per item; dismissal is stored under this key. */
@@ -36,6 +36,7 @@ export function workbenchSetupTodos(settings: CodexForObsidianSettings, hasPro: 
   const enabled = AGENT_MODULE_IDS.filter(id => !PRO_MODULES.includes(id) || proModuleEnabled(settings, id));
   // Free users are not reminded about PRO modules they cannot open.
   const counted = enabled.filter(id => !PRO_MODULES.includes(id) || hasPro);
+  // Owners route each module's work first; without one, module-page actions ask for an owner and auto-linking pauses.
   const missing = counted.filter(id => !getModuleOwner(registry, id));
   const linkPaused = missing.includes("knowledge-base") && settings.knowledgeBase?.autoLinkEnabled !== false;
   if (linkPaused) list.push({ kind: "knowledge-owner", key: "knowledge-owner", signature: "knowledge-owner", moduleIds: ["knowledge-base"] });
@@ -45,10 +46,6 @@ export function workbenchSetupTodos(settings: CodexForObsidianSettings, hasPro: 
     const owner = getModuleOwner(registry, id);
     if (owner && isExpertAgent(owner)) list.push({ kind: "pro-owner", key: `pro-owner:${id}`, signature: owner.id, moduleIds: [id], agentName: owner.name });
   }
-  const generalist = registry.agents.find(agent => agent.id === GENERALIST_AGENT_ID);
-  const byGeneralist = counted.filter(id => getModuleOwner(registry, id)?.id === GENERALIST_AGENT_ID);
-  if (generalist && byGeneralist.length && !generalist.persona?.trim())
-    list.push({ kind: "persona", key: "persona", signature: "persona", moduleIds: byGeneralist, agentName: generalist.name });
   const dismissed = settings.setup?.setupTodoDismissed ?? {};
   return list.filter(item => dismissed[item.key] !== item.signature);
 }

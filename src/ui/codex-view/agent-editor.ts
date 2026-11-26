@@ -1,4 +1,11 @@
 import { grantModuleCapabilities, getModuleOwner, moduleCapability } from "../../agents/registry";
+import { agentReasoningChoices, defaultAgentReasoning } from "../../agents/agent-model";
+import { apiProviderHasUsableCredential, getApiProviderModel } from "../../settings/settings";
+import { apiProviderConfiguredDisplayName, normalizeApiProviderId, providerBrandForIdentity } from "../../settings/provider-presets";
+import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
+import { xiaoechoSelectableModels } from "../../membership/xiaoecho-catalog-state";
+import { xiaoechoDesktopModelName } from "../../membership/xiaoecho-points";
+import type { ReasoningEffort } from "../../types/app-server";
 import { ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import type { AgentEditorCreationOptions, AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
@@ -14,7 +21,7 @@ import { pasteAgentPersona } from "../agent-persona-paste";
 import { normalizeAgentDisplayName } from "../../harness/memory/agent-identity-model";
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { AvatarProcessingError, createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
-import { createOriginButton, createOriginCheck, createOriginPagination, createOriginInput, createOriginRadioGroup, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
+import { createOriginButton, createOriginCheck, createOriginPagination, createOriginInput, createOriginRadioGroup, createOriginSelect, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
 import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
 import { applySettingsBackButton, createSettingsNavigationRow, createSettingsPage, showSettingsInlineConfirmation } from "../../settings/settings-v2";
 import { renderExpertSubmission } from "../../experts/submission-view";
@@ -23,13 +30,16 @@ import type { EchoInkResource } from "../../resources/types";
 import { userFacingErrorText } from "../../core/error-copy";
 
 const MODULE_NAMES: Record<AgentModuleId, string> = { journal: "日记", todos: "待办", finance: "财务", "knowledge-base": "知识库", "english-diary": "英文日记", "pdf-reading": "PDF 精读", review: "复盘" };
-const MODULE_CAPABILITY = (id: AgentModuleId) => id === "knowledge-base" ? "knowledge" : id;
 const CAPABILITIES = [
   ["conversation", "对话", "Conversation"], ["memory", "记忆", "Memory"], ["vault-notes", "库内笔记", "Vault notes"],
   ["journal", "日记", "Journal"], ["todos", "待办", "To-dos"], ["finance", "财务", "Finance"], ["knowledge", "知识整理", "Knowledge organization"],
   ["english-diary", "英文日记", "English diary"], ["pdf-reading", "PDF 精读", "PDF reading"], ["review", "复盘", "Review"],
   ["web-search", "联网搜索", "Web search"], ["obsidian-plugins", "Obsidian 插件管理", "Obsidian plugin management"]
 ] as const;
+const EFFORT_LABELS: Record<ReasoningEffort, [string, string]> = {
+  none: ["关闭", "Off"], minimal: ["低", "Minimal"], low: ["低", "Low"], medium: ["中", "Medium"], high: ["高", "High"], xhigh: ["极高", "Extra high"], max: ["最高", "Maximum"]
+};
+const modelChoiceValue = (providerSettingsId: string, modelId: string) => JSON.stringify([providerSettingsId, modelId]);
 const MODULE_NAMES_EN: Record<AgentModuleId, string> = { journal: "Journal", todos: "To-dos", finance: "Finance", "knowledge-base": "Knowledge base", "english-diary": "English diary", "pdf-reading": "PDF reading", review: "Review" };
 const PRESET_NAMES_EN: Record<string, string> = { organizer: "Organizer", bookkeeper: "Bookkeeper", researcher: "Researcher", "journal-companion": "Journal companion", reviewer: "Reviewer" };
 const STYLE_COPY_EN: Record<AgentDefinition["styleId"], { name: string; thinking: string; tone: string; responseStructure: string }> = {
@@ -188,6 +198,7 @@ export class AgentEditorController {
     const fields = this.el(body, "fieldset", "echoink-agent-editor-fields");
     if (!this.editingId) this.renderPresets(fields);
     this.renderIdentity(fields);
+    this.renderModel(fields);
     this.renderPersona(fields);
     this.renderCompanyApproval(fields);
     if (this.draft.agent.id !== GENERAL_ASSISTANT_ID) this.renderResponsibilities(fields);
@@ -312,13 +323,6 @@ export class AgentEditorController {
       const copy = this.el(row, "span", "", label);
       if (value === "assistant") this.el(copy, "div", "echoink-agent-editor-availability", this.t("删除仍由你来批", "You still approve deletions"));
     }
-    const name = this.t("派活时可给员工开放文件夹", "Open folders to staff when dispatching");
-    const row = this.el(section, "label", "echoink-agent-editor-choice echoink-agent-company-folders");
-    const check = createOriginCheck(row, { attr: { "aria-label": name } });
-    check.checked = agent.companyFolderGrants !== false;
-    this.el(this.el(row, "span", "echoink-agent-editor-choice-copy"), "span", "", name);
-    attachNativeTooltip(row, () => this.t("员工本来就能读整个库、写自己模块的文件夹；打开后，总助派活时还能让员工写到指定文件夹，只对那件活有效。", "Staff can read the whole vault and write their own module folders. When on, the assistant can also let a dispatched task write to named folders."));
-    check.onchange = () => { if (check.checked) delete agent.companyFolderGrants; else agent.companyFolderGrants = false; this.changed(); };
   }
 
   private renderPresets(parent: HTMLElement): void {
@@ -435,6 +439,69 @@ export class AgentEditorController {
     else setIcon(parent, "bot");
   }
 
+  private renderModel(parent: HTMLElement): void {
+    const agent = this.draft!.agent, settings = this.host.settings;
+    const section = this.section(parent, this.t("模型", "Model"));
+    section.classList.add("echoink-agent-editor-major", "echoink-agent-editor-model");
+    const box = this.el(section, "div", "echoink-agent-editor-model-box");
+    const choices: Parameters<typeof createOriginSelect>[2][number][] = [{ value: "", label: this.t("跟随当前对话", "Follow the conversation") }];
+    for (const provider of settings.apiProviders) {
+      if (!apiProviderHasUsableCredential(provider, settings.openAICodexCredential)) continue;
+      const providerId = normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name);
+      const providerName = apiProviderConfiguredDisplayName(providerId, provider.name, settings.settingsLanguage);
+      const brand = providerBrandForIdentity(provider.providerId, provider.baseUrl, provider.name);
+      for (const model of xiaoechoSelectableModels(provider)) choices.push({ value: modelChoiceValue(provider.id, model.id), group: providerName,
+        label: provider.providerId === "xiaoecho" ? xiaoechoDesktopModelName(provider.providerId, model) : model.displayName || model.id,
+        renderIcon: container => { renderProviderBrandIcon(container, brand); } });
+    }
+    const value = agent.model ? modelChoiceValue(agent.model.providerSettingsId, agent.model.modelId) : "";
+    if (value && !choices.some(choice => choice.value === value)) choices.push({ value, label: this.t("原模型不可用", "Saved model unavailable") });
+    const select = createOriginSelect(box, { attr: { "aria-label": this.t("模型", "Model"), "data-field": "model" } }, choices, value, this.host.app);
+    const effort = this.el(box, "div", "echoink-agent-editor-model-effort");
+    select.element.addEventListener("change", () => {
+      const next = select.element.value;
+      const [providerSettingsId, modelId] = next ? JSON.parse(next) as [string, string] : ["", ""];
+      const provider = settings.apiProviders.find(item => item.id === providerSettingsId);
+      const model = provider ? getApiProviderModel(provider, modelId) : null;
+      if (!provider || !model) delete agent.model;
+      else {
+        const reasoning = defaultAgentReasoning(settings, provider, model, agent.model?.reasoning);
+        agent.model = { providerSettingsId, modelId, ...(reasoning ? { reasoning } : {}) };
+      }
+      this.renderModelEffort(effort); this.changed();
+    });
+    this.renderModelEffort(effort);
+  }
+  /** Multi-level models show 思考强度, on/off models 深度思考; unsupported models say so. */
+  private renderModelEffort(area: HTMLElement): void {
+    disposeOriginControls(area); area.replaceChildren();
+    const preference = this.draft!.agent.model, settings = this.host.settings;
+    const provider = preference && settings.apiProviders.find(item => item.id === preference.providerSettingsId);
+    const model = provider && preference ? getApiProviderModel(provider, preference.modelId) : null;
+    area.hidden = !provider || !model;
+    if (!provider || !model || !preference) return;
+    const choices = agentReasoningChoices(provider, model);
+    if (choices.kind === "none") { this.el(area, "div", "echoink-agent-editor-model-note", this.t("此模型不支持深度思考。", "This model does not support deep reasoning.")); return; }
+    const label = choices.kind === "toggle" ? this.t("深度思考", "Deep reasoning") : this.t("思考强度", "Reasoning effort");
+    this.el(area, "div", "echoink-agent-editor-label", label);
+    const current = preference.reasoning && choices.options.includes(preference.reasoning) ? preference.reasoning : defaultAgentReasoning(settings, provider, model) ?? choices.options[0];
+    const place = (value: string) => {
+      const index = Math.max(0, choices.options.indexOf(value as ReasoningEffort));
+      group.element.setCssProps({ "--echoink-agent-effort-index": String(index) });
+      group.element.querySelectorAll<HTMLElement>(".echoink-agent-editor-effort-option").forEach((item, at) => item.classList.toggle("is-selected", at === index));
+    };
+    const group = createOriginRadioGroup(area, current, label, value => { preference.reasoning = value as ReasoningEffort; place(value); this.changed(); });
+    group.element.classList.add("echoink-agent-editor-effort");
+    group.element.setCssProps({ "--echoink-agent-effort-count": String(choices.options.length) }); place(current);
+    for (const option of choices.options) {
+      const text = choices.kind === "toggle" ? option === "none" ? this.t("关闭", "Off") : this.t("开启", "On") : this.t(...EFFORT_LABELS[option]);
+      const item = this.el(group.element, "div", "echoink-agent-editor-effort-option");
+      this.el(item, "span", "", text).setAttribute("aria-hidden", "true");
+      group.addItem(item, option, false).setAttribute("aria-label", text);
+    }
+    place(current);
+  }
+
   private renderResponsibilities(parent: HTMLElement): void {
     const section = this.section(parent, this.t("负责的模块", "Responsible for"));
     section.classList.add("echoink-agent-editor-major");
@@ -448,11 +515,12 @@ export class AgentEditorController {
       check.onchange = () => { this.draft!.moduleIds = check.checked ? [...new Set([...this.draft!.moduleIds, id])] : this.draft!.moduleIds.filter(value => value !== id); this.syncRequiredCapabilities(); this.changed(); };
     }
   }
+  /** Only experts keep per-module grants; every other Agent can already do any module's work. */
   private syncRequiredCapabilities(): void {
-    if (!this.draft || this.draft.agent.id === GENERAL_ASSISTANT_ID) return;
+    if (!this.draft || this.draft.agent.id === GENERAL_ASSISTANT_ID || !isExpertAgent(this.draft.agent)) return;
     for (const id of this.draft.moduleIds) grantModuleCapabilities(this.draft.agent, id);
   }
-  private requiredCapability(id: string): boolean { return !isBasicAgentCapability(id) && this.draft!.moduleIds.some(module => moduleCapability(module) === id); }
+  private requiredCapability(id: string): boolean { return isExpertAgent(this.draft!.agent) && !isBasicAgentCapability(id) && this.draft!.moduleIds.some(module => moduleCapability(module) === id); }
   private selected(id: string): boolean {
     const skill = this.resources.find(resource => resource.kind === "skill" && vaultSkillCapabilityId(resource.id) === id);
     if (skill) {
@@ -483,7 +551,7 @@ export class AgentEditorController {
       row.classList.add("is-unavailable"); const reason = reasons.join(this.t("；", "; "));
       check.setAttribute("aria-description", reason);
     }
-    attachNativeTooltip(row, () => [...reasons, this.requiredCapability(id) ? this.t("负责这个模块，必须能用", "Required by this module") : ""].filter(Boolean).join(this.t("；", "; ")));
+    if (reasons.length) attachNativeTooltip(row, () => reasons.join(this.t("；", "; ")));
     check.onchange = () => { this.setCapability(id, check.checked); this.changed(); };
   }
   private renderResources(): void {
@@ -493,16 +561,19 @@ export class AgentEditorController {
     title.id = `${this.instanceId}-capabilities`;
     const group = this.el(area, "div", "echoink-agent-editor-resource-group");
     group.setAttribute("role", "group"); group.setAttribute("aria-labelledby", title.id);
-    const builtIn = this.el(group, "section", "echoink-agent-editor-resource-section");
-    this.el(builtIn, "h4", "echoink-agent-editor-resource-heading", this.t("模块工具", "Module tools"));
-    this.button(builtIn, this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }).classList.add("echoink-agent-resource-refresh");
-    const base = this.el(builtIn, "div", "echoink-agent-editor-capabilities");
-    for (const [id] of CAPABILITIES) {
-      if (!isBasicAgentCapability(id) || (id === "web-search" && isCommunityExpertAgent(this.draft!.agent))
-        || this.draft!.baseline?.agent.disabledCapabilityIds?.includes(id)) this.capability(base, id, this.capabilityName(id));
+    // Experts keep their existing per-module limits; every other Agent has all module work built in.
+    if (isExpertAgent(this.draft!.agent)) {
+      const builtIn = this.el(group, "section", "echoink-agent-editor-resource-section");
+      this.el(builtIn, "h4", "echoink-agent-editor-resource-heading", this.t("模块工具", "Module tools"));
+      this.button(builtIn, this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }).classList.add("echoink-agent-resource-refresh");
+      const base = this.el(builtIn, "div", "echoink-agent-editor-capabilities");
+      for (const [id] of CAPABILITIES) {
+        if (!isBasicAgentCapability(id) || (id === "web-search" && isCommunityExpertAgent(this.draft!.agent))
+          || this.draft!.baseline?.agent.disabledCapabilityIds?.includes(id)) this.capability(base, id, this.capabilityName(id));
+      }
     }
     const customGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
-    const bar = this.el(customGroup, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
+    const bar = this.el(customGroup, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("技能", "Skills"));
     const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
     if (this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
     const custom = this.resources.filter(isLocalUserSkill);
@@ -510,7 +581,7 @@ export class AgentEditorController {
       const skills = this.el(customGroup, "div", "echoink-agent-editor-options");
       for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);
     }
-    if (!custom.length && !this.loadingResources && !this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-empty", this.t("暂无自建 Skill", "No custom Skills"));
+    if (!custom.length && !this.loadingResources && !this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-empty", this.t("暂无技能", "No skills"));
     const mcpGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
     this.el(mcpGroup, "h4", "echoink-agent-editor-resource-heading", "MCP");
     this.button(mcpGroup, this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }).classList.add("echoink-agent-resource-refresh");
@@ -627,9 +698,8 @@ export class AgentEditorController {
     for (const [id, element] of this.ownership) {
       const selected = this.draft.moduleIds.includes(id);
       const owner = getModuleOwner(this.host.settings.agentRegistry, id);
-      const moved = owner && owner.id !== this.draft.agent.id ? owner.name : "";
-      const missing = selected && !this.selected(MODULE_CAPABILITY(id)) ? this.t(`缺少「${this.capabilityName(MODULE_CAPABILITY(id))}」能力`, `Missing “${this.capabilityName(MODULE_CAPABILITY(id))}” capability`) : "";
-      element.textContent = [moved, missing].filter(Boolean).join(this.t("；", "; "));
+      element.textContent = !owner || owner.id === this.draft.agent.id ? "" : selected ? this.t(`将从${owner.name}接管`, `Takes over from ${owner.name}`) : owner.name;
+      element.classList.toggle("is-takeover", !!owner && owner.id !== this.draft.agent.id && selected);
     }
     for (const [id, check] of this.capabilityChecks) {
       check.checked = this.selected(id); check.disabled = !!this.busy || this.requiredCapability(id);

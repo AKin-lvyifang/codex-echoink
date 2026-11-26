@@ -1,7 +1,8 @@
+import { giftTriggerLabel, mountWorkbenchGifts } from "../ui/workbench-gifts";
+import { mountWorkbenchStar } from "../ui/workbench-star";
 import { saveWorkbenchDismissal } from "./workbench-dismissals";
 import { userFacingErrorText, rawErrorText, actionFailureText } from "../core/error-copy";
 import { bindPressFeedback } from "../ui/press-feedback";
-import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { openTaskMenu } from "../ui/codex-view/task-menu";
 import { changeManagedTaskStatus } from "../plugin/task-management";
@@ -15,13 +16,14 @@ import { workbenchResultType, type WorkbenchResultType } from "./workbench-resul
 import { getTodoProjects, resolveTodoProject } from "./todo-projects";
 import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip, type ViewStateResult } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, type AgentDefinition, type AgentModuleId } from "../agents/types";
-import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, taskCardHintSummary, taskState, taskStateLabel, taskSummary, type TaskEntry } from "../agents/task-presentation";
+import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
+import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, taskCardHintSummary, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { providerFailureText } from "../harness/pi/provider-failure";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
 import { workbenchGuideSteps, workbenchSetupTodos, setupTodoModuleName, type WorkbenchGuideStep, type WorkbenchSetupTodoKind } from "./workbench-setup-todos";
+import { workbenchSignalAction } from "./workbench-signals";
 import { releaseReminderRows } from "../ui/release-reminders";
 import { ReleaseNotesModal } from "./release-notes-modal";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
@@ -44,9 +46,10 @@ import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-up
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
 import { knowledgeLinkingProgressText, knowledgeLinkingTaskGroup, renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 import { renderVaultMemoryBanner } from "./vault-memory-banner";
-import { renderDiaryOrganizerBanner } from "./diary-organizer-banner";
+import { confirmAllDiaryReviews, diaryOrganizerInvitation, diaryReviewItems, diaryReviewTitle, renderDiaryReviewList } from "./diary-organizer-banner";
 import { diaryHomeSummary } from "./diary-organizer-summary";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
+import type { DiaryItem } from "../diary-organizer/types";
 import type { CompanyService } from "../company/service";
 import type { CompanyDocument, CompanyProject } from "../company/types";
 import { RemoteConversationModal } from "./remote-conversation-modal";
@@ -56,7 +59,7 @@ import { companyApprovals, companyDecisions, CompanyInteractionController } from
 import { pendingDecisions } from "../company/logic";
 import { agentLookup } from "./project-parts";
 import { workbenchProjectCard, workbenchProjectSignature, workbenchProjects } from "./workbench-projects";
-import { mountWorkbenchCloudSync } from "./cloud-sync-status";
+import { mountWorkbenchCloudSync, workbenchCloudSyncState } from "./cloud-sync-status";
 import { isWorkbenchPanelId, visibleWorkbenchNavigation, WORKBENCH_NAVIGATION, WORKBENCH_OVERVIEW, type WorkbenchNavigationItem, type WorkbenchPanelId } from "./workbench-navigation";
 import { WorkbenchModulePanel, type WorkbenchEmbeddedView } from "./workbench-module-panel";
 import type { WorkbenchNavigationId } from "../settings/workbench-navigation-settings";
@@ -107,17 +110,28 @@ export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<Ech
   if (question.selection === "single" && question.questionId === entry.pendingResponse.questionId) return question;
 }
 
-const SETUP_TODO_ICONS: Record<WorkbenchSetupTodoKind, string> = {
-  model: "plug", knowledge: "library", "knowledge-owner": "link-2-off", owners: "user-round-plus", "pro-owner": "crown", persona: "pen-line"
-};
-const SETUP_TODO_MODULE_ICONS: Record<AgentModuleId, string> = {
-  journal: "notebook-pen", todos: "list-checks", "knowledge-base": "library", review: "rotate-ccw", finance: "wallet", "english-diary": "languages", "pdf-reading": "file-text"
-};
+const SETUP_TODO_ICONS: Record<WorkbenchSetupTodoKind, string> = { model: "plug", knowledge: "library", "knowledge-owner": "link-2-off", owners: "user-round-plus", "pro-owner": "crown" };
+/** Unfinished tasks older than this fold under “更早 N 项”. */
+export const WORKBENCH_RECENT_UNFINISHED_MS = 7 * 24 * 60 * 60 * 1000;
+const REMINDERS_SHOWN = 2, REMOTE_SHOWN = 3;
+/** Group order on the overview; a group that appears is inserted at its place. */
+const GROUP_ORDER = ["waiting", "todos", "running", "projects", "interrupted", "signals", "completed", "remote-conversations"];
+interface ReminderAction { label: string; key: string; run: () => unknown; variant: "primary" | "secondary" | "tertiary"; icon?: string }
+interface Reminder {
+  /** Data attribute naming the source, e.g. ["data-setup-todo", "model"]. */
+  attr: [string, string];
+  icon: string; text: string; sub?: string; warn?: boolean; pro?: boolean;
+  actions: ReminderAction[];
+  dismiss?: { label: string; key: string; run: () => unknown };
+}
 export class EchoInkWorkbenchView extends ItemView {
   private pressFeedbackDispose?: () => void;
   private weatherStage?: WorkbenchWeatherStage;
   private guideVisible = false;
-  private setupTodosExpanded = false;
+  private remindersExpanded = false;
+  private olderUnfinishedExpanded = false;
+  private remoteExpanded = false;
+  private diaryReviewOpen = false;
   private onboardingHistoryReady = false;
   private readonly onboardingChecks = new Map<string, string>();
   private navObserver?: ResizeObserver;
@@ -134,6 +148,8 @@ export class EchoInkWorkbenchView extends ItemView {
   private readonly id = `echoink-workbench-${++viewId}`;
   private foreground: ForegroundView | null = null;
   private closed = true;
+  private giftControl?: ReturnType<typeof mountWorkbenchGifts>;
+  private starControl?: ReturnType<typeof mountWorkbenchStar>;
   private unsubscribers: (() => void)[] = [];
   private refreshTimer: number | null = null;
   private clockTimer: number | null = null;
@@ -213,14 +229,14 @@ export class EchoInkWorkbenchView extends ItemView {
     this.observeKnowledgeActivity();
     this.foreground = new ForegroundView(this, active => this.foregroundChanged(active));
     this.unsubscribers.push(this.plugin.releaseUpdate.subscribe(() => {
-      if (this.active()) this.renderReleaseReminders();
+      if (this.active()) this.renderReminders();
     }));
     this.foregroundChanged(this.foreground.isActive());
     const service = this.plugin.getConversationRunService();
     this.unsubscribers.push(this.port.subscribe(() => this.scheduleRefresh()));
     this.unsubscribers.push(service.subscribe({ refresh: (_id, _message, shellChanged = true) => {
       if (!shellChanged) return;
-      if (this.plugin.settings.workbenchOnboardingDismissed) { this.syncGuideVisibility(); this.renderSetupTodos(); }
+      if (this.plugin.settings.workbenchOnboardingDismissed) { this.syncGuideVisibility(); this.renderReminders(); }
       this.scheduleRefresh();
     }, clearAcceptedDraft() {}, isTaskVisible: () => false }));
     this.registerDomEvent(this.contentEl, "keydown", event => this.handleKeys(event));
@@ -269,6 +285,8 @@ export class EchoInkWorkbenchView extends ItemView {
   private foregroundChanged(active: boolean): void {
     if (this.closed) return;
     this.weatherStage?.setActive(active);
+    this.giftControl?.refresh();
+    this.starControl?.refresh();
     if (!active) {
       this.clearNavigationPlayback();
       this.clearTimers(); this.stopSearchWork(); this.refreshVersion++; this.refreshPending = true;
@@ -276,7 +294,7 @@ export class EchoInkWorkbenchView extends ItemView {
     }
     void this.plugin.releaseUpdate.checkIfStale(this.plugin.manifest.version);
     if (this.languagePending) { this.languagePending = false; void this.refreshLanguage(); return; }
-    this.renderReleaseReminders();
+    this.renderReminders();
     this.scheduleRefresh(0);
     if (this.searchOpen) this.scheduleSearch();
   }
@@ -321,7 +339,7 @@ export class EchoInkWorkbenchView extends ItemView {
       const remote = overview?.docs[project.deviceId];
       if (remote) items.push({ key: `project-${project.deviceId}-${project.id}`, project, doc: remote, device: { id: project.deviceId, name: project.deviceName } });
     }
-    const section = this.group("projects", this.t("项目", "Projects"), items.length, false);
+    const section = this.group("projects", this.t("项目", "Projects"), items.length, "grid");
     if (!section) return;
     const agents = this.plugin.settings.agentRegistry.agents, agent = agentLookup(agents);
     const approvals = doc ? companyApprovals(this.plugin, doc) : [];
@@ -341,10 +359,13 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   /** Conversations other devices mirrored into the sync folder: open read-only, or continue here as a new conversation. */
   private renderRemoteConversations(): void {
-    const items = this.plugin.syncOverview?.snapshot().conversations.slice(0, 20) ?? [];
-    const section = this.group("remote-conversations", this.t("其他设备的对话", "Conversations on other devices"), items.length, true);
+    const all = this.plugin.syncOverview?.snapshot().conversations.slice(0, 20) ?? [];
+    const section = this.group("remote-conversations", this.t("其他设备会话", "Other device conversations"), all.length, "list");
     if (!section) return;
-    this.syncRows(section.lastElementChild as HTMLElement, items, item => `remote-${item.deviceId}-${item.id}`, item => JSON.stringify([this.language, item]), item => {
+    const hidden = all.length - REMOTE_SHOWN;
+    this.headingToggle(section, "remote-more", hidden > 0, this.remoteExpanded, this.t(`还有 ${hidden} 条`, `Show ${hidden} more`), () => { this.remoteExpanded = !this.remoteExpanded; this.render(); });
+    const items = this.remoteExpanded ? all : all.slice(0, REMOTE_SHOWN);
+    this.syncRows(this.groupBody(section), items, item => `remote-${item.deviceId}-${item.id}`, item => JSON.stringify([this.language, item]), item => {
       const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-completed"; row.dataset.remoteConversation = `${item.deviceId}:${item.id}`;
       const button = this.button(row, "", `remote-${item.deviceId}-${item.id}`, () => new RemoteConversationModal(this.plugin, item).open(), "tertiary"); button.classList.add("wb-completed-body");
       setIcon(button.createSpan({ cls: "wb-result-kind", attr: { "aria-label": this.t("对话", "Conversation") } }), "message-square-text");
@@ -358,13 +379,16 @@ export class EchoInkWorkbenchView extends ItemView {
       return row;
     });
   }
-  private renderCompanyDecisions(): void {
-    const doc = this.companyService?.doc;
-    const count = doc ? companyApprovals(this.plugin, doc).length + companyDecisions(this.plugin, doc).length : 0;
-    const section = this.group("company-decisions", this.t("等你定", "Your decision"), count, true);
-    if (!section) { this.companyInteractions.dispose(); return; }
-    this.companyInteractions.render(section.lastElementChild as HTMLElement, {}, () => this.render());
+  /** A text button at the right of a group heading that shows or folds the rest of the group. */
+  private headingToggle(section: HTMLElement, key: string, show: boolean, expanded: boolean, label: string, toggle: () => void): void {
+    const heading = section.firstElementChild as HTMLElement;
+    let button = heading.querySelector<HTMLButtonElement>(`[data-wb="${key}"]`);
+    if (!show) { if (button) { this.disposeControls(button); button.remove(); } return; }
+    if (!button) { button = this.button(heading, "", key, toggle, "tertiary"); button.dataset.wb = key; }
+    button.textContent = expanded ? this.t("收起", "Collapse") : label;
+    button.setAttribute("aria-expanded", String(expanded)); button.setAttribute("aria-controls", this.groupBody(section).id ||= `${this.id}-${key}`);
   }
+  private groupBody(section: HTMLElement): HTMLElement { return section.lastElementChild as HTMLElement; }
   private taskGroups(now: number): TaskGroups {
     const doc = this.plugin.companyService?.doc;
     const companyPending = new Set(doc ? [...companyApprovals(this.plugin, doc, { includeJudging: true }).map(item => item.dispatch.id),
@@ -549,21 +573,30 @@ export class EchoInkWorkbenchView extends ItemView {
     }, () => this.scheduleNav());
     if (this.foreground) this.weatherStage.setActive(this.active());
     const actions = header.createDiv({ cls: "wb-header-actions" });
+    actions.dataset.wb = "header-actions";
+    const notices = this.plugin.workbenchNotices;
+    if (notices) {
+      const gift = this.button(actions, giftTriggerLabel(this.language), "workbench-gift", () => {}, "icon", "gift");
+      this.giftControl = mountWorkbenchGifts(gift, notices, { language: () => this.language, visible: () => this.active() });
+    }
     this.button(actions, this.t("搜索笔记", "Search notes"), "search-trigger", () => this.openSearch(), "icon", "search").dataset.wb = "search-trigger";
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
-    this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
+    const newTask = this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
+    if (notices) this.starControl = mountWorkbenchStar(actions, notices, {
+      language: this.language, focusFallback: newTask,
+      canShow: () => this.active() && this.panelId === WORKBENCH_OVERVIEW.id && !this.searchOpen &&
+        !this.plugin.isWorkbenchStarBlocked() && !actions.ownerDocument.querySelector(".modal-container, dialog[open]")
+    });
     // Search opens right under the navigation, on the overview and on module pages alike.
     this.renderSearchShell(page);
     const overview = page.createDiv({ cls: "wb-overview", attr: { "data-wb": "overview" } });
-    overview.createDiv({ attr: { "data-wb": "cloud-sync" } });
+    // Problems that block work stay on top, unfolded; everything else lives in one reminders list.
     overview.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
-    overview.createDiv({ attr: { "data-wb": "release-reminders", "aria-live": "polite" } }).hidden = true;
-    overview.createDiv({ attr: { "data-wb": "setup-todos", "aria-live": "polite" } });
-    overview.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
+    overview.createDiv({ cls: "wb-status", attr: { "data-wb": "status", "aria-live": "polite" } });
+    overview.createDiv({ attr: { "data-wb": "reminders", "aria-live": "polite" } }).hidden = true;
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
     void this.contentEl.ownerDocument.fonts?.ready.then(() => this.scheduleNav());
-    overview.createDiv({ cls: "wb-status", attr: { "data-wb": "status", "aria-live": "polite" } });
     overview.createDiv({ cls: "wb-groups", attr: { "data-wb": "groups" } });
     overview.createDiv({ cls: "wb-empty", text: this.t("暂时没有待处理的事", "Nothing to handle right now"), attr: { "data-wb": "empty" } }).hidden = true;
     const firstMount = !this.panelHost;
@@ -617,6 +650,8 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private disposeHeader(): void {
+    this.giftControl?.dispose(); this.giftControl = undefined;
+    this.starControl?.dispose(); this.starControl = undefined;
     this.cloudSyncDispose?.(); this.cloudSyncDispose = undefined;
     this.clearNavigationPlayback();
     this.navObserver?.disconnect(); this.navObserver = undefined;
@@ -729,104 +764,107 @@ export class EchoInkWorkbenchView extends ItemView {
     catch (error) { settings.setup.onboardingGuideDone = previous.done; settings.workbenchOnboardingDismissed = previous.dismissed; throw error; }
     this.plugin.notifyHomeSurfacesChanged(); this.render();
   }
-  private renderReleaseReminders(): void {
-    const host = this.field("release-reminders"), controller = this.plugin.releaseUpdate;
-    const rows = releaseReminderRows(controller, this.plugin.manifest.version, this.language, host.ownerDocument, notes => {
-      new ReleaseNotesModal(this.app, notes, this.language === "en", () => controller.markNotesSeen(notes.version)).open();
-    });
-    const signature = JSON.stringify([this.language, rows.map(row => [row.kind, row.version])]);
-    if (host.dataset.signature === signature) return;
-    this.disposeControls(host);
-    host.empty();
-    host.dataset.signature = signature;
-    host.hidden = !rows.length;
-    if (!rows.length) return;
-    const list = host.createDiv({ cls: "wb-setup-todos" });
-    for (const entry of rows) {
-      const row = list.createDiv({ cls: "wb-setup-todo", attr: { "data-release-reminder": entry.kind } });
-      setIcon(row.createSpan({ cls: "wb-setup-todo-lead", attr: { "aria-hidden": "true" } }), entry.icon);
-      row.createSpan({ cls: "wb-grow", text: entry.text });
-      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
-      this.button(actions, entry.action, `release:${entry.kind}`, entry.select).classList.add("is-small");
-      this.button(actions, entry.close, `release:${entry.kind}:dismiss`, entry.dismiss, "icon", "x");
+  /** Setup problems, cloud sync trouble, release news, the diary offer and onboarding, by weight; two show, the rest fold. */
+  private reminderItems(): Reminder[] {
+    const english = this.language === "en", pro = workbenchHasPro(this.plugin);
+    const items: Reminder[] = [];
+    const names = (ids: readonly string[]) => ids.map(id => setupTodoModuleName(id as Parameters<typeof setupTodoModuleName>[0], english)).join(english ? ", " : "、");
+    const dismissSetup = (key: string, signature: string) => async () => {
+      const busyKey = `setup-todo-dismiss:${key}`;
+      if (this.busy.has(busyKey)) return;
+      await this.runAction(busyKey, async () => {
+        const setup = this.plugin.settings.setup, previous = setup.setupTodoDismissed;
+        setup.setupTodoDismissed = { ...previous, [key]: signature };
+        try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
+        catch (error) { setup.setupTodoDismissed = previous; throw error; }
+        this.plugin.notifyHomeSurfacesChanged();
+      });
+    };
+    const setup = workbenchSetupTodos(this.plugin.settings, pro);
+    for (const item of setup) {
+      const key = `setup-todo:${item.key}`;
+      const owners = () => this.plugin.openModuleOwnerSettings(item.moduleIds[0]);
+      items.push({
+        attr: ["data-setup-todo", item.key], icon: SETUP_TODO_ICONS[item.kind], warn: item.kind !== "owners",
+        text: item.kind === "model" ? this.t("未连接模型服务", "No model service connected")
+          : item.kind === "knowledge" ? this.t("未设置知识库", "Knowledge base not set up")
+          : item.kind === "knowledge-owner" ? this.t("知识库未指定负责人，自动双链已暂停", "Knowledge base has no owner, so auto-linking is paused")
+          : item.kind === "owners" ? this.t(`${names(item.moduleIds)}未指定负责人`, `${names(item.moduleIds)} ${item.moduleIds.length > 1 ? "have" : "has"} no owner`)
+          : this.t(`${names(item.moduleIds)}负责人「${item.agentName}」需要 PRO`, `${names(item.moduleIds)} owner "${item.agentName}" requires PRO`),
+        actions: item.kind === "model" ? [{ label: this.t("连接", "Connect"), key, run: () => this.plugin.openWorkbenchSetup("models"), variant: "secondary" }]
+          : item.kind === "knowledge" ? [{ label: this.t("设置", "Set up"), key, run: () => this.plugin.openPaperGuideAfterOnboarding(true), variant: "secondary" }]
+          : item.kind === "knowledge-owner" || item.kind === "owners" ? [{ label: this.t("指定负责人", "Assign owner"), key, run: owners, variant: "secondary" }]
+          : [{ label: this.t("更换负责人", "Change owner"), key: `${key}:aside`, run: owners, variant: "tertiary" }, { label: this.t("续费 PRO", "Renew PRO"), key, run: () => this.plugin.openEchoInkAccountSettings("benefits"), variant: "primary" }],
+        dismiss: { label: this.t("关闭此提醒", "Dismiss this reminder"), key: `setup-todo-dismiss:${item.key}`, run: dismissSetup(item.key, item.signature) }
+      });
     }
+    const cloud = workbenchCloudSyncState(this.plugin, !english)?.attention;
+    if (cloud) items.push({ attr: ["data-cloud-reminder", "sync"], icon: "cloud", warn: true, text: cloud,
+      actions: [{ label: this.t("查看", "View"), key: "cloud-reminder", run: () => this.plugin.openEchoInkAccountSettings(), variant: "secondary" }] });
+    const controller = this.plugin.releaseUpdate;
+    for (const entry of releaseReminderRows(controller, this.plugin.manifest.version, this.language, this.contentEl.ownerDocument, notes => {
+      new ReleaseNotesModal(this.app, notes, english, () => controller.markNotesSeen(notes.version)).open();
+    })) items.push({ attr: ["data-release-reminder", entry.kind], icon: entry.icon, text: entry.text,
+      actions: [{ label: entry.action, key: `release:${entry.kind}`, run: entry.select, variant: "secondary" }],
+      dismiss: { label: entry.close, key: `release:${entry.kind}:dismiss`, run: entry.dismiss } });
+    const invitation = diaryOrganizerInvitation(this.plugin);
+    if (invitation) items.push({ attr: ["data-diary-invitation", "organizer"], icon: "notebook-pen", text: invitation.text, sub: invitation.note,
+      actions: [{ label: this.t("暂不开启", "Not now"), key: "diary-invitation:dismiss", run: () => this.runAction("diary-invitation", () => invitation.dismiss()), variant: "tertiary" },
+        { label: this.t("开启", "Enable"), key: "diary-invitation:enable", run: () => this.runAction("diary-invitation", () => invitation.enable()), variant: "secondary" }] });
+    if (this.guideVisible) {
+      const journalOwner = !!workbenchModuleOwner(this.plugin, "journal");
+      for (const step of workbenchGuideSteps(this.plugin.settings, setup)) {
+        const locked = !!step.pro && !pro;
+        items.push({ attr: ["data-guide-step", step.key], icon: step.icon, text: this.t(step.zh, step.en), pro: locked,
+          actions: [{ label: locked ? this.t("了解 PRO", "About PRO") : step.key === "journal" && !journalOwner ? this.t("指定负责人", "Assign owner") : this.t(step.actionZh, step.actionEn),
+            key: `guide:${step.key}`, run: () => this.runGuideStep(step), variant: "secondary", icon: locked ? "lock" : undefined }],
+          dismiss: { label: this.t("关闭此步骤", "Dismiss this step"), key: `guide-dismiss:${step.key}`, run: () => this.markGuide({ [step.key]: true }) } });
+      }
+    }
+    return items;
   }
 
-  private renderSetupTodos(): void {
-    const host = this.field("setup-todos"), english = this.language === "en";
-    const items = workbenchSetupTodos(this.plugin.settings, workbenchHasPro(this.plugin));
-    const steps = this.guideVisible ? workbenchGuideSteps(this.plugin.settings, items) : [];
-    const guide = this.guideVisible && items.length + steps.length > 0, limit = guide ? 5 : 3, total = items.length + steps.length;
-    host.hidden = !total;
-    const journalOwner = !!workbenchModuleOwner(this.plugin, "journal"), pro = workbenchHasPro(this.plugin);
-    const signature = JSON.stringify([this.language, this.setupTodosExpanded, guide, journalOwner, pro, items.map(item => [item.key, item.signature, item.agentName]), steps.map(step => step.key)]);
+  private renderReminders(): void {
+    const host = this.contentEl.querySelector<HTMLElement>('[data-wb="reminders"]');
+    if (!host) return;
+    const items = this.reminderItems();
+    const guide = items.some(item => item.attr[0] === "data-guide-step");
+    const signature = JSON.stringify([this.language, this.remindersExpanded, guide, items.map(item => [item.attr, item.icon, item.text, item.sub, item.warn, item.pro, item.actions.map(action => [action.key, action.label, action.variant, action.icon]), item.dismiss?.key])]);
+    host.hidden = !items.length;
     if (host.dataset.signature === signature) return;
+    const doc = host.ownerDocument, focused = host.contains(doc.activeElement) ? (doc.activeElement as HTMLElement).dataset.wbFocus : undefined;
     this.disposeControls(host); host.empty(); host.dataset.signature = signature;
-    if (!total) return;
-    const names = (ids: readonly AgentModuleId[]) => ids.map(id => setupTodoModuleName(id, english)).join(english ? ", " : "、");
-    const owners = (id: AgentModuleId) => () => this.plugin.openModuleOwnerSettings(id);
-    const box = guide ? host.createEl("section", { cls: "wb-guide" }) : host;
-    if (guide) {
-      const head = box.createDiv({ cls: "wb-section-heading" });
-      head.createEl("h2", { text: this.t("新手引导", "Getting started") }); head.createSpan({ cls: "wb-count", text: String(total) });
-      this.button(head, this.t("全部关掉", "Dismiss all"), "guide-dismiss-all", () => this.markGuide("all"), "tertiary");
-    }
-    const list = box.createDiv({ cls: "wb-setup-todos" });
-    const lead = (row: HTMLElement, icon: string, warn = false) => setIcon(row.createSpan({ cls: `wb-setup-todo-lead${warn ? " is-warning" : ""}`, attr: { "aria-hidden": "true" } }), icon);
-    const room = this.setupTodosExpanded || total <= limit ? total : limit;
-    const shown = items.slice(0, room), shownSteps = steps.slice(0, Math.max(0, room - shown.length));
+    if (!items.length) return;
+    const section = host.createEl("section", { cls: "wb-section wb-reminders" });
+    const head = section.createDiv({ cls: "wb-section-heading" });
+    head.createEl("h2", { text: this.t("提醒", "Reminders"), attr: { tabindex: "-1" } }); head.createSpan({ cls: "wb-count", text: String(items.length) });
+    if (guide) this.button(head, this.t("关闭新手引导", "Dismiss getting started"), "guide-dismiss-all", () => this.markGuide("all"), "tertiary");
+    const list = section.createDiv({ cls: "wb-setup-todos", attr: { id: `${this.id}-reminders` } });
+    const shown = this.remindersExpanded || items.length <= REMINDERS_SHOWN ? items : items.slice(0, REMINDERS_SHOWN);
     for (const item of shown) {
-      const row = list.createDiv({ cls: "wb-setup-todo", attr: { "data-setup-todo": item.key } });
-      lead(row, SETUP_TODO_ICONS[item.kind], item.kind === "model" || item.kind === "knowledge-owner" || item.kind === "pro-owner");
-      const text = item.kind === "model" ? this.t("还没连接模型", "Model not connected")
-        : item.kind === "knowledge" ? this.t("还没设置知识库", "Knowledge base not set up")
-        : item.kind === "knowledge-owner" ? this.t("知识库没有负责人，自动双链已暂停", "Knowledge base has no owner, so auto-linking is paused")
-        : item.kind === "owners" ? this.t(`${names(item.moduleIds)}还没有负责人`, `${names(item.moduleIds)} ${item.moduleIds.length > 1 ? "have" : "has"} no owner`)
-        : item.kind === "pro-owner" ? this.t(`${names(item.moduleIds)}负责人「${item.agentName}」需要 PRO`, `${names(item.moduleIds)} owner "${item.agentName}" requires PRO`)
-        : this.t(`${names(item.moduleIds)}都交给了${item.agentName}`, `${names(item.moduleIds)} ${item.moduleIds.length > 1 ? "are" : "is"} handled by ${item.agentName}`);
-      const label = row.createSpan({ cls: "wb-grow", text });
-      if (item.kind === "owners") {
-        const mods = label.createSpan({ cls: "wb-setup-todo-mods", attr: { "aria-hidden": "true" } });
-        for (const id of item.moduleIds) setIcon(mods.createSpan(), SETUP_TODO_MODULE_ICONS[id]);
+      const row = list.createDiv({ cls: "wb-setup-todo", attr: { [item.attr[0]]: item.attr[1] } });
+      setIcon(row.createSpan({ cls: `wb-setup-todo-lead${item.warn ? " is-warning" : ""}`, attr: { "aria-hidden": "true" } }), item.icon);
+      const copy = row.createSpan({ cls: "wb-grow" });
+      const text = copy.createSpan({ cls: "wb-setup-todo-text", text: item.text });
+      if (item.pro) text.createSpan({ cls: "wb-guide-pro", text: "PRO" });
+      if (item.sub) copy.createSpan({ cls: "wb-setup-todo-sub", text: item.sub });
+      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
+      for (const action of item.actions) {
+        const button = this.button(actions, action.label, action.key, action.run, action.variant, action.icon);
+        if (action.variant !== "tertiary") button.classList.add("is-small");
       }
-      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
-      const key = `setup-todo:${item.key}`;
-      const main = (label: string, action: () => unknown, variant: "primary" | "secondary" = "secondary") => this.button(actions, label, key, action, variant).classList.add("is-small");
-      const aside = (label: string, action: () => unknown) => this.button(actions, label, `${key}:aside`, action, "tertiary");
-      if (item.kind === "model") main(this.t("去连接", "Connect"), () => this.plugin.openWorkbenchSetup("models"));
-      else if (item.kind === "knowledge") main(this.t("去初始化", "Set up"), () => this.plugin.openPaperGuideAfterOnboarding(true));
-      else if (item.kind === "knowledge-owner" || item.kind === "owners") main(this.t("去指定", "Assign"), owners(item.moduleIds[0]));
-      else if (item.kind === "pro-owner") { aside(this.t("换负责人", "Change owner"), owners(item.moduleIds[0])); main(this.t("续费 PRO", "Renew PRO"), () => this.plugin.openEchoInkAccountSettings("benefits"), "primary"); }
-      else { aside(this.t("换负责人", "Change owner"), owners(item.moduleIds[0])); main(this.t("写人格", "Write persona"), () => this.plugin.openAgentPersonaEditor(GENERALIST_AGENT_ID)); }
-      this.button(actions, this.t("关闭这条提醒", "Dismiss this reminder"), `setup-todo-dismiss:${item.key}`, async () => {
-        const busyKey = `setup-todo-dismiss:${item.key}`;
-        if (this.busy.has(busyKey)) return;
-        await this.runAction(busyKey, async () => {
-          const setup = this.plugin.settings.setup, previous = setup.setupTodoDismissed;
-          setup.setupTodoDismissed = { ...previous, [item.key]: item.signature };
-          try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
-          catch (error) { setup.setupTodoDismissed = previous; throw error; }
-          this.plugin.notifyHomeSurfacesChanged();
-        });
-      }, "icon", "x");
+      if (item.dismiss) this.button(actions, item.dismiss.label, item.dismiss.key, item.dismiss.run, "icon", "x");
     }
-    for (const step of shownSteps) {
-      const row = list.createDiv({ cls: "wb-setup-todo", attr: { "data-guide-step": step.key } });
-      lead(row, step.icon);
-      const text = row.createSpan({ cls: "wb-grow", text: this.t(step.zh, step.en) });
-      const locked = step.pro && !pro;
-      if (locked) text.createSpan({ cls: "wb-guide-pro", text: "PRO" });
-      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
-      const label = locked ? this.t("了解 PRO", "About PRO") : step.key === "journal" && !journalOwner ? this.t("指定负责人", "Assign owner") : this.t(step.actionZh, step.actionEn);
-      this.button(actions, label, `guide:${step.key}`, () => this.runGuideStep(step), "secondary", locked ? "lock" : undefined).classList.add("is-small");
-      this.button(actions, this.t("关闭这一条", "Dismiss this step"), `guide-dismiss:${step.key}`, () => this.markGuide({ [step.key]: true }), "icon", "x");
-    }
-    const hidden = total - shown.length - shownSteps.length;
-    if (hidden > 0) {
-      const more = this.button(list, this.t(`还有 ${hidden} 项`, `${hidden} more`), "setup-todo-more", () => { this.setupTodosExpanded = true; this.renderSetupTodos(); }, "tertiary", "chevron-down");
+    if (items.length > REMINDERS_SHOWN) {
+      const hidden = items.length - REMINDERS_SHOWN;
+      const more = this.button(list, this.remindersExpanded ? this.t("收起", "Collapse") : this.t(`还有 ${hidden} 条`, `Show ${hidden} more`), "reminders-more",
+        () => { this.remindersExpanded = !this.remindersExpanded; this.renderReminders(); }, "tertiary", this.remindersExpanded ? "chevron-up" : "chevron-down");
       more.classList.add("wb-setup-todo", "is-more");
+      more.setAttribute("aria-expanded", String(this.remindersExpanded)); more.setAttribute("aria-controls", list.id);
       more.querySelector(".wb-button-icon")?.classList.add("wb-setup-todo-lead");
     }
+    if (focused) (Array.from(host.querySelectorAll<HTMLElement>("[data-wb-focus]")).find(node => node.dataset.wbFocus === focused)
+      ?? host.querySelector<HTMLElement>("h2"))?.focus({ preventScroll: true });
   }
 
   /** Opens a module in its own tab, the way the navigation worked before (Cmd/Ctrl-click, middle-click). */
@@ -938,10 +976,11 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private render(now = Date.now()): void {
+    this.starControl?.refresh();
     if (this.closed) return;
     if (!this.active()) { this.refreshPending = true; return; }
-    const cloudHost = this.contentEl.querySelector<HTMLElement>('[data-wb="cloud-sync"]');
-    if (cloudHost && this.plugin.cloudSync && !cloudHost.hasChildNodes()) this.cloudSyncDispose = mountWorkbenchCloudSync(cloudHost, this.plugin, this.language !== "en");
+    const actions = this.contentEl.querySelector<HTMLElement>('[data-wb="header-actions"]');
+    if (actions && this.plugin.cloudSync && !this.cloudSyncDispose) this.cloudSyncDispose = mountWorkbenchCloudSync(actions, this.plugin, this.language !== "en", () => { if (this.active()) this.renderReminders(); });
     const active = this.contentEl.ownerDocument.activeElement as HTMLElement | null;
     const focus = active && this.field("groups").contains(active) ? active.dataset.wbFocus : undefined;
     const oldGroup = active?.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup;
@@ -955,10 +994,8 @@ export class EchoInkWorkbenchView extends ItemView {
     this.syncModuleEntry();
     this.scheduleNav();
     this.syncGuideVisibility();
-    this.renderReleaseReminders();
-    this.renderSetupTodos();
+    this.renderReminders();
     this.renderStatus();
-    renderDiaryOrganizerBanner(this.field("diary-organizer"), this.plugin);
     renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {
       resolve: async action => { await this.plugin.resolveVaultMemory(action); await this.refresh(); },
       error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }
@@ -966,22 +1003,24 @@ export class EchoInkWorkbenchView extends ItemView {
     const groups = this.taskGroups(now);
     const linkingGroup = knowledgeLinkingTaskGroup(this.linkingTask);
     const counts = Object.fromEntries(Object.entries(groups).map(([key, entries]) => [key, entries.length + (key === linkingGroup ? 1 : 0)])) as Record<keyof TaskGroups, number>;
-    const state = this.taskError || this.entries === null ? null : workbenchAgentState(groups, linkingGroup);
-    const count = state === "unfinished" ? counts.interrupted : state === "waiting" ? counts.waiting : state === "working" ? counts.running : counts.completed;
-    this.weatherStage?.update(state, state === "unfinished" ? this.t(`${count} 件没做完`, `${count} unfinished`) : state === "waiting" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : state === "working" ? this.t(`${count} 件在跑`, `${count} in progress`) : state === "done" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
+    // Company decisions also wait for the person; count them with the waiting tasks.
+    const companyDoc = this.companyService?.doc;
+    const decisionCount = companyDoc ? companyApprovals(this.plugin, companyDoc).length + companyDecisions(this.plugin, companyDoc).length : 0;
+    const state = this.taskError || this.entries === null ? null : workbenchAgentState(decisionCount ? { ...groups, waiting: [...groups.waiting, ...Array.from({ length: decisionCount })] } : groups, linkingGroup);
+    const count = state === "unfinished" ? counts.interrupted : state === "waiting" ? counts.waiting + decisionCount : state === "working" ? counts.running : counts.completed;
+    this.weatherStage?.update(state, state === "unfinished" ? this.t(`${count} 项未完成`, `${count} unfinished`) : state === "waiting" ? this.t(`${count} 项待确认`, `${count} to confirm`) : state === "working" ? this.t(`${count} 项进行中`, `${count} in progress`) : state === "done" ? this.t(`今日已完成 ${count} 项`, `${count} completed today`) : this.t("一切安静", "All quiet"));
     // A module page is showing: the header stays live, the hidden overview redraws when it returns.
     if (this.panelId !== WORKBENCH_OVERVIEW.id) return;
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
-    this.renderProjects();
-    this.renderRemoteConversations();
-    this.renderCompanyDecisions();
-    for (const [state, zh, en] of [["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"], ["interrupted", "没做完", "Not finished"]] as const) {
-      this.taskGroup(state, this.t(zh, en), groups[state], now);
-    }
-    this.renderSignals();
-    this.taskGroup("completed", this.t("今天完成", "Completed today"), groups.completed, now);
+    this.renderConfirmations(groups.waiting, now);
     this.renderTodos();
+    this.taskGroup("running", this.t("正在进行", "In progress"), groups.running, now);
+    this.renderProjects();
+    this.renderUnfinished(groups.interrupted, now);
+    this.renderSignals();
+    this.taskGroup("completed", this.t("今日已完成", "Completed today"), groups.completed, now);
+    this.renderRemoteConversations();
     this.updateActionStates();
     this.field("empty").hidden = !this.entries || !this.snapshot || !!this.taskError || !!this.dataError || !!this.snapshot.issues.length || this.field("groups").children.length > 0 || this.guideVisible;
     this.updateSelection();
@@ -1014,7 +1053,7 @@ export class EchoInkWorkbenchView extends ItemView {
         .filter((value): value is string => !!value).map(reason => userFacingErrorText(reason, "", language)).filter(Boolean))];
       if (reasons.length) {
         const details = copy.createEl("details");
-        details.createEl("summary", { text: this.t("查看原因", "Details") });
+        details.createEl("summary", { text: this.t("查看详情", "Details") });
         for (const reason of reasons) details.createDiv({ text: reason });
       }
       this.button(row, this.t("重试", "Retry"), "retry", async () => {
@@ -1025,7 +1064,7 @@ export class EchoInkWorkbenchView extends ItemView {
     }
   }
 
-  private group(key: string, title: string, count: number, list: boolean): HTMLElement | null {
+  private group(key: string, title: string, count: number, kind: "list" | "grid" | "confirm"): HTMLElement | null {
     const host = this.field("groups");
     let section = Array.from(host.children).find(node => (node as HTMLElement).dataset.wbGroup === key) as HTMLElement | undefined;
     if (!section) {
@@ -1034,11 +1073,17 @@ export class EchoInkWorkbenchView extends ItemView {
       heading.createEl("h2", { attr: { tabindex: "-1" } });
       heading.createSpan({ cls: "wb-count" });
       section.createDiv({ cls: "wb-group-status", attr: { role: "status", "aria-live": "polite" } });
-      section.createDiv({ cls: list ? "wb-rows" : "wb-grid" });
+      if (kind === "confirm") {
+        // Decisions, waiting tasks and journal items to check share one group; each keeps its own controls.
+        const body = section.createDiv({ cls: "wb-confirm" });
+        body.createDiv({ cls: "wb-rows", attr: { "data-wb-part": "decisions" } });
+        body.createDiv({ cls: "wb-grid", attr: { "data-wb-part": "tasks" } });
+        body.createDiv({ attr: { "data-wb-part": "diary-review" } });
+      } else section.createDiv({ cls: kind === "list" ? "wb-rows" : "wb-grid" });
     }
     section.querySelector("h2")!.textContent = title;
     // Projects come from the company store, which is already in memory: no loading or error state.
-    const projects = key === "projects" || key === "company-decisions" || key === "remote-conversations", taskGroup = !projects && !["signals", "todos"].includes(key);
+    const projects = key === "projects" || key === "remote-conversations", taskGroup = !projects && !["signals", "todos"].includes(key);
     const available = projects || (taskGroup ? this.entries !== null : this.snapshot !== null);
     const error = projects ? "" : taskGroup ? this.taskError : this.dataError;
     const uncertain = !taskGroup && !projects && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
@@ -1059,8 +1104,7 @@ export class EchoInkWorkbenchView extends ItemView {
     } else if (status === "unconfirmed") feedback.createSpan({ text: this.t("部分事项尚未确认", "Some items have not been checked") });
     section.lastElementChild?.classList.toggle("is-empty", !count);
     // Reorder only when a group appears; retained rows and focused controls stay put.
-    const order = ["company-decisions", "projects", "waiting", "running", "interrupted", "signals", "completed", "remote-conversations", "todos"];
-    const next = Array.from(host.children).find(node => order.indexOf((node as HTMLElement).dataset.wbGroup!) > order.indexOf(key));
+    const next = Array.from(host.children).find(node => GROUP_ORDER.indexOf((node as HTMLElement).dataset.wbGroup!) > GROUP_ORDER.indexOf(key));
     if (next && section.nextElementSibling !== next) host.insertBefore(section, next);
     return section;
   }
@@ -1093,16 +1137,81 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private taskGroup(state: keyof TaskGroups, title: string, entries: readonly TaskEntry[], now: number): void {
     const linking = knowledgeLinkingTaskGroup(this.linkingTask) === state ? this.linkingTask : null;
-    const section = this.group(state, title, entries.length + (linking ? 1 : 0), state === "completed");
+    const section = this.group(state, title, entries.length + (linking ? 1 : 0), state === "completed" ? "list" : "grid");
     if (!section) return;
-    const host = section.lastElementChild as HTMLElement;
-    type Item = { kind: "task"; entry: TaskEntry } | { kind: "linking"; task: Readonly<KnowledgeLinkingTask> };
+    this.syncTaskItems(this.groupBody(section), state, entries, linking, now);
+  }
+  private syncTaskItems(host: HTMLElement, state: keyof TaskGroups, entries: readonly TaskEntry[], linking: Readonly<KnowledgeLinkingTask> | null, now: number, diary?: readonly DiaryItem[]): void {
+    type Item = { kind: "task"; entry: TaskEntry } | { kind: "linking"; task: Readonly<KnowledgeLinkingTask> } | { kind: "diary"; items: readonly DiaryItem[] };
     const items: Item[] = entries.map(entry => ({ kind: "task", entry }));
     if (linking) items.push({ kind: "linking", task: linking });
-    this.syncRows(host, items, item => item.kind === "linking" ? `system-linking:${item.task.id}` : item.entry.conversationId,
-      item => item.kind === "linking" ? JSON.stringify([this.language, item.task]) : JSON.stringify([this.language, item.entry, this.maintenance.get(item.entry.conversationId), this.agent(item.entry), this.summary(item.entry), this.pending(item.entry), this.interruptions.get(item.entry.conversationId), this.plugin.taskToolCallRecovery?.(item.entry.conversationId, this.interruptions.get(item.entry.conversationId)), this.interruptionErrors.has(item.entry.conversationId), !!this.taskError]),
-      item => item.kind === "linking" ? this.linkingRow(item.task) : state === "completed" ? this.completedRow(item.entry) : this.taskCard(item.entry));
+    if (diary?.length) items.push({ kind: "diary", items: diary });
+    this.syncRows(host, items, item => item.kind === "linking" ? `system-linking:${item.task.id}` : item.kind === "diary" ? "diary-review" : item.entry.conversationId,
+      item => item.kind === "linking" ? JSON.stringify([this.language, item.task]) : item.kind === "diary" ? JSON.stringify([this.language, item.items.map(entry => [entry.id, entry.revision, diaryReviewTitle(entry)]), this.diaryReviewOpen, this.busy.has("diary-confirm-all")])
+        : JSON.stringify([this.language, item.entry, this.maintenance.get(item.entry.conversationId), this.agent(item.entry), this.summary(item.entry), this.pending(item.entry), this.interruptions.get(item.entry.conversationId), this.plugin.taskToolCallRecovery?.(item.entry.conversationId, this.interruptions.get(item.entry.conversationId)), this.interruptionErrors.has(item.entry.conversationId), !!this.taskError]),
+      item => item.kind === "linking" ? this.linkingRow(item.task) : item.kind === "diary" ? this.diaryCard(item.items) : state === "completed" ? this.completedRow(item.entry) : this.taskCard(item.entry));
     host.querySelectorAll<HTMLElement>("[data-started-at]").forEach(time => { time.textContent = this.elapsed(Number(time.dataset.startedAt), now); });
+  }
+  /** 待确认: decisions for the company, tasks waiting for an answer, and journal items to check, in that order. */
+  private renderConfirmations(waiting: readonly TaskEntry[], now: number): void {
+    const doc = this.companyService?.doc;
+    const decisions = doc ? companyApprovals(this.plugin, doc).length + companyDecisions(this.plugin, doc).length : 0;
+    const diary = diaryReviewItems(this.plugin, now);
+    if (!diary.length) this.diaryReviewOpen = false;
+    const linking = knowledgeLinkingTaskGroup(this.linkingTask) === "waiting" ? this.linkingTask : null;
+    const section = this.group("waiting", this.t("待确认", "To confirm"), decisions + waiting.length + (linking ? 1 : 0) + diary.length, "confirm");
+    if (!section) { this.companyInteractions.dispose(); return; }
+    const part = (name: string) => section.querySelector<HTMLElement>(`[data-wb-part="${name}"]`)!;
+    if (doc) this.companyInteractions.render(part("decisions"), {}, () => this.render()); else this.companyInteractions.dispose();
+    part("decisions").hidden = !decisions;
+    this.syncTaskItems(part("tasks"), "waiting", waiting, linking, now, diary);
+    part("tasks").hidden = !waiting.length && !linking && !diary.length;
+    const review = part("diary-review");
+    review.id ||= `${this.id}-diary-review`;
+    review.hidden = !this.diaryReviewOpen;
+    if (this.diaryReviewOpen) renderDiaryReviewList(review, this.plugin); else { this.disposeControls(review); review.empty(); delete review.dataset.diarySignature; }
+  }
+  /** The journal organizer's open questions as one card; its rows open below the group. */
+  private diaryCard(items: readonly DiaryItem[]): HTMLElement {
+    const card = ownedEl(this.contentEl.ownerDocument, "article"); card.className = "wb-task wb-diary-review"; card.dataset.wb = "diary-review-card";
+    const body = card.createDiv({ cls: "wb-task-body" });
+    const header = body.createSpan({ cls: "wb-task-header" });
+    setIcon(header.createSpan({ cls: "wb-task-lead", attr: { "aria-hidden": "true" } }), "notebook-pen");
+    header.createSpan({ cls: "wb-agent-name", text: this.t("日记整理", "Journal organizer") });
+    const status = header.createSpan({ cls: "wb-task-status is-waiting" });
+    setIcon(status.createSpan({ cls: "wb-status-icon", attr: { "aria-hidden": "true" } }), "message-circle");
+    status.createSpan({ text: this.t("待确认", "To confirm") });
+    body.createSpan({ cls: "wb-task-title", text: this.t(`${items.length} 项待办与账目`, `${items.length} ${items.length === 1 ? "item" : "items"} from journals`) });
+    body.createSpan({ cls: "wb-task-step", text: items.slice(0, 3).map(diaryReviewTitle).filter(Boolean).join(" · ") });
+    const options = card.createDiv({ cls: "wb-question" }).createDiv({ cls: "wb-options" });
+    const key = "diary-confirm-all", pending = this.busy.has(key);
+    const all = this.button(options, this.t("全部确认", "Confirm all"), key, () => this.runAction(key, async () => {
+      const result = await confirmAllDiaryReviews(this.plugin);
+      this.plugin.notifyHomeSurfacesChanged();
+      if (result.stoppedAt) {
+        this.diaryReviewOpen = true;
+        new Notice(result.reason ?? (result.confirmed > 0 ? this.t(`已确认 ${result.confirmed} 项，其余需逐条核对。`, `${result.confirmed} confirmed. Review the remaining items individually.`) : this.t("以下事项需逐条核对。", "Review these items individually.")));
+      }
+    }), "secondary");
+    all.classList.add("is-small"); all.disabled = pending; setAmicroButtonPending(all, pending);
+    const open = this.button(options, this.diaryReviewOpen ? this.t("收起", "Collapse") : this.t("逐条核对", "Review items"), "diary-review-toggle", () => {
+      this.diaryReviewOpen = !this.diaryReviewOpen; this.render();
+    }, "secondary");
+    open.classList.add("is-small"); open.disabled = pending;
+    open.setAttribute("aria-expanded", String(this.diaryReviewOpen)); open.setAttribute("aria-controls", `${this.id}-diary-review`);
+    return card;
+  }
+  /** 未完成: the last seven days show; older ones fold under “更早 N 项”. */
+  private renderUnfinished(entries: readonly TaskEntry[], now: number): void {
+    const linking = knowledgeLinkingTaskGroup(this.linkingTask) === "interrupted" ? this.linkingTask : null;
+    const section = this.group("interrupted", this.t("未完成", "Unfinished"), entries.length + (linking ? 1 : 0), "grid");
+    if (!section) return;
+    const at = (entry: TaskEntry) => this.maintenance.get(entry.conversationId)?.updatedAt ?? entry.taskInterruptedAt ?? entry.updatedAt;
+    const recent = entries.filter(entry => now - at(entry) <= WORKBENCH_RECENT_UNFINISHED_MS);
+    const older = entries.length - recent.length;
+    if (!older) this.olderUnfinishedExpanded = false;
+    this.headingToggle(section, "unfinished-older", older > 0, this.olderUnfinishedExpanded, this.t(`更早 ${older} 项`, `Show ${older} earlier`), () => { this.olderUnfinishedExpanded = !this.olderUnfinishedExpanded; this.render(); });
+    this.syncTaskItems(this.groupBody(section), "interrupted", this.olderUnfinishedExpanded ? entries : recent, linking, now);
   }
   private linkingRow(task: Readonly<KnowledgeLinkingTask>): HTMLElement {
     const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-rows";
@@ -1174,12 +1283,12 @@ export class EchoInkWorkbenchView extends ItemView {
       status.createSpan({ text: this.t("进行中", "Running") });
       const started = !activity && (this.plugin.getConversationRunService().runs.get(entry.conversationId)?.turnStartedAt || entry.taskStartedAt);
       if (started) status.createSpan({ attr: { "data-started-at": String(started) } });
-    } else { setIcon(status.createSpan({ cls: "wb-status-icon", attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
+    } else { setIcon(status.createSpan({ cls: "wb-status-icon", attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: state === "waiting" ? this.t("待确认", "To confirm") : state === "interrupted" ? this.t("未完成", "Unfinished") : this.t("已完成", "Completed") }); }
     body.createSpan({ cls: "wb-task-title", text: title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
     const recovery = state === "interrupted" ? this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)) : undefined;
     const step = recovery?.message ?? (activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry));
-    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity && !recovery ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
+    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity && !recovery ? this.t(`已中断：${step}`, `Stopped at: ${step}`) : step });
     if (activity) renderMaintenanceProgressBar(body, activity);
     if (state === "interrupted") {
       const footer = card.createDiv({ cls: "wb-task-footer" });
@@ -1280,7 +1389,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private renderSignals(): void {
     const signals = this.remainingSignals(this.snapshot?.signals ?? []);
-    const section = this.group("signals", this.t("可以交给 Agent", "Ready for an Agent"), signals.length, true);
+    const section = this.group("signals", this.t("可以交给 Agent", "Ready for an Agent"), signals.length, "list");
     if (!section) return;
     const heading = section.firstElementChild as HTMLElement;
     let restore = heading.querySelector<HTMLButtonElement>("[data-wb=signal-restore]");
@@ -1307,7 +1416,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.syncRows(host, this.signalsExpanded ? signals : signals.slice(0, 5), signal => signal.key,
       // A fresh capture time is not a visual change. Replacing the button between
       // pointerdown and pointerup prevents the browser from firing its click.
-      signal => JSON.stringify([this.language, { ...signal, source: { ...signal.source, capturedAt: 0 } }, this.plugin.settings.agentRegistry, !!this.dataError]),
+      signal => JSON.stringify([this.language, { ...signal, source: { ...signal.source, capturedAt: 0 } }, !!this.dataError]),
       signal => {
         const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row";
         const icon = row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, signal.icon);
@@ -1318,7 +1427,9 @@ export class EchoInkWorkbenchView extends ItemView {
           this.plugin.notifyHomeSurfacesChanged();
         }), "tertiary");
         const key = `signal-${signal.key}`;
-        const button = this.button(actions, moduleOwnerLabel(this.plugin, signal.moduleId), key,
+        // The general assistant takes every suggestion: a new conversation, prefilled, nothing sent yet.
+        const label = workbenchSignalAction(signal.id, this.language === "en");
+        const button = this.button(actions, label, key,
           () => this.runAction(key, async () => {
             await launchWorkbenchSignal(this.plugin, signal, { load: async now => {
               const current = await this.port.load(now);
@@ -1327,14 +1438,14 @@ export class EchoInkWorkbenchView extends ItemView {
           }), "secondary");
         button.classList.add("is-small"); button.disabled = !!this.dataError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
         button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "data";
-        button.dataset.wbSignalLabel = moduleOwnerLabel(this.plugin, signal.moduleId);
+        button.dataset.wbSignalLabel = label;
         return row;
       });
   }
   private renderTodos(): void {
     const todos = this.snapshot?.todayTodos ?? [];
     const projects = getTodoProjects(this.plugin);
-    const section = this.group("todos", this.t("今日待办", "Today's to-dos"), todos.length, true);
+    const section = this.group("todos", this.t("今日待办", "Today's to-dos"), todos.length, "list");
     if (!section) return;
     const heading = section.firstElementChild as HTMLElement;
     if (!heading.querySelector("button")) this.button(heading, this.t("全部待办", "All to-dos"), "all-todos", () => openWorkbenchModule(this.plugin, "todos"), "tertiary", "chevron-right");
@@ -1370,7 +1481,7 @@ export class EchoInkWorkbenchView extends ItemView {
         || button.dataset.wbMemory === "true" && !!(this.memoryNotice || this.memoryError);
       setAmicroButtonPending(button, pending);
       if (button.dataset.wbSignalLabel) {
-        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在新建…", "Creating…") : button.dataset.wbSignalLabel;
+        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在打开…", "Opening…") : button.dataset.wbSignalLabel;
       }
       if (button.dataset.wbResume) {
         const recovery = taskId ? this.plugin.taskToolCallRecovery?.(taskId, this.interruptions.get(taskId)) : undefined;
@@ -1409,6 +1520,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.field("search").hidden = true; (this.field("search-input") as HTMLInputElement).value = "";
     this.field("search-input").setAttribute("aria-expanded", "false"); this.field("search-input").removeAttribute("aria-activedescendant"); this.field("search-trigger").setAttribute("aria-expanded", "false");
     if (focus) this.field("search-trigger").focus();
+    this.starControl?.refresh();
   }
   private stopSearchWork(): void {
     if (this.searchTimer !== null) this.contentEl.ownerDocument.defaultView?.clearTimeout(this.searchTimer);
@@ -1432,16 +1544,19 @@ export class EchoInkWorkbenchView extends ItemView {
       if (abort.signal.aborted || !this.searchOpen || !this.active() || query !== (this.field("search-input") as HTMLInputElement).value) return;
       this.searchResolvedQuery = query; this.searchMatches = result.matches; this.searchIndex = -1;
       const host = this.field("search-results"); this.disposeControls(host); host.empty();
-      this.field("search-heading").textContent = this.t(`找到 ${result.count} 篇笔记`, `${result.count} notes found`);
+      // Before any input, the same list is the most recently edited notes.
+      const recent = !query.trim();
+      this.field("search-heading").textContent = recent ? this.t("最近编辑", "Recently edited") : this.t(`找到 ${result.count} 篇笔记`, `${result.count} notes found`);
       result.matches.forEach((match, index) => {
         const option = this.button(host, "", `search-${index}`, async () => { this.closeSearch(true); await this.openNote(match.path); }, "tertiary");
         option.classList.add("wb-search-result"); option.dataset.searchIndex = String(index); option.id = `${this.id}-option-${index}`; option.tabIndex = -1;
         option.setAttribute("role", "option"); option.setAttribute("aria-selected", "false");
         const icon = option.createSpan({ cls: "wb-result-icon", attr: { "aria-hidden": "true" } }); setIcon(icon, "file-text");
         const copy = option.createSpan({ cls: "wb-grow" }); copy.createEl("strong", { text: match.title });
-        copy.createSpan({ text: match.snippet || match.path }); copy.createSpan({ cls: "wb-secondary", text: `${match.path} · ${formatHomeRelativeTime(match.mtime, this.language)}` });
+        if (!recent) copy.createSpan({ text: match.snippet || match.path });
+        copy.createSpan({ cls: "wb-secondary", text: `${match.path} · ${formatHomeRelativeTime(match.mtime, this.language)}` });
       });
-      this.field("search-empty").hidden = result.count > 0;
+      this.field("search-empty").hidden = result.count > 0 || recent;
       this.field("search-hint").textContent = result.failed ? this.t(`${result.failed} 篇笔记读取失败`, `${result.failed} notes could not be read`) : this.t("↑ ↓ 选择 · Enter 打开 · 最多显示 6 项", "↑ ↓ Select · Enter Open · Up to 6 results");
     } catch { if (!abort.signal.aborted && this.active()) this.field("search-heading").textContent = this.t("搜索未能完成。请重试。", "The search could not be completed. Try again."); }
   }

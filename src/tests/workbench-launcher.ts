@@ -4,6 +4,7 @@ import type { WorkbenchSignal, WorkbenchSnapshot } from "../home/workbench-types
 import { defaultTaskWorkspace } from "../agents/task-workspace";
 import { TaskNavigationState, consumeAcceptedTaskDraft } from "../ui/codex-view/task-navigation-state";
 import { defaultAgentRegistry } from "../agents/registry";
+import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
 import type CodexForObsidianPlugin from "../main";
@@ -38,41 +39,40 @@ export async function runWorkbenchLauncherTests(root?: string): Promise<void> {
   const registry = defaultAgentRegistry();
   registry.agents.push({ ...registry.agents[0], id: "planner", name: "安排员" });
   registry.moduleOwners.todos = "planner";
-  const opened: string[] = [];
-  const dispatched: WorkbenchSignal[] = [];
+  const prefills: [string, string | undefined, string | undefined][] = [];
   let launchError: Error | undefined;
   const plugin = {
     settings: { agentRegistry: registry, settingsLanguage: "zh-CN" },
-    startWorkbenchSignalTask: async (agentId: string, item: WorkbenchSignal) => {
+    // Mirrors the sidebar: the assistant's new-conversation composer is prefilled unless it holds an unsent draft.
+    openAgentTaskList: async (agentId: string, prefill?: string, prefillSource?: string) => {
       if (launchError) throw launchError;
-      opened.push(agentId); dispatched.push(item); return "new-task";
-    }
+      prefills.push([agentId, prefill, prefillSource]);
+      navigation.navigate({ kind: "list", agentId });
+      return prefill === undefined || navigation.prefill(agentId, prefill, prefillSource);
+    },
+    startWorkbenchSignalTask: async () => { throw new Error("suggestions are never sent without the user"); }
   } as unknown as CodexForObsidianPlugin;
-  assert.equal(await launchWorkbenchSignal(plugin, signal, data), true);
-  assert.deepEqual(opened, ["planner"]);
-  assert.equal(dispatched[0].prompt, current.prompt, "use current count, not the stale row");
-  const savedSource = parseWorkbenchTaskSource(JSON.stringify(dispatched[0].source));
-  assert.deepEqual(savedSource?.objects, ["todo-a", "todo-b"]);
-  navigation.navigate({ kind: "list", agentId: "planner" });
+  assert.equal(await launchWorkbenchSignal(plugin, signal, data), true, "the first suggestion opens a prefilled conversation");
+  assert.deepEqual(prefills.map(([agentId]) => agentId), [GENERAL_ASSISTANT_ID], "every suggestion goes to the general assistant");
+  assert.equal(prefills[0][1], current.prompt, "use current count, not the stale row");
+  assert.equal(navigation.draft().text, current.prompt, "the request is prefilled in a new conversation");
+  const savedSource = parseWorkbenchTaskSource(prefills[0][2]);
+  assert.deepEqual(savedSource?.objects, ["todo-a", "todo-b"], "the frozen source travels with the draft");
   navigation.save({ ...navigation.draft(), text: "用户修改的草稿", attachments: [{ type: "file", name: "note.md", path: "note.md" }] });
-  assert.equal(await launchWorkbenchSignal(plugin, signal, data), true);
-  assert.equal(navigation.draft().text, "用户修改的草稿");
-  assert.equal(navigation.draft().attachments.length, 1);
-  assert.equal(visible, true, "dispatch does not invent a completed reminder");
-  launchError = new Error("派发失败");
-  await assert.rejects(launchWorkbenchSignal(plugin, signal, data), /派发失败/);
-  launchError = new WorkbenchSetupRequired("先配置可用的模型。", "models");
-  await assert.rejects(launchWorkbenchSignal(plugin, signal, data), error => error instanceof WorkbenchSetupRequired && error.target === "models");
+  assert.equal(await launchWorkbenchSignal(plugin, signal, data), false, "an unsent draft is kept");
+  assert.equal(navigation.draft().text, "用户修改的草稿", "the draft text survives");
+  assert.equal(navigation.draft().attachments.length, 1, "the draft files survive");
+  assert.equal(visible, true, "prefilling does not invent a completed reminder");
+  launchError = new Error("对话栏未就绪");
+  await assert.rejects(launchWorkbenchSignal(plugin, signal, data), /对话栏未就绪/);
   launchError = undefined;
   visible = false;
-  assert.equal(await launchWorkbenchSignal(plugin, signal, data), false);
-  assert.equal(opened.length, 2, "a stale row does not open another draft");
+  assert.equal(await launchWorkbenchSignal(plugin, signal, data), false, "a stale row is refused");
+  assert.equal(prefills.length, 2, "a stale row does not open another draft");
   visible = true; registry.moduleOwners.todos = "";
-  let pickCount = 0; (plugin as any).openModuleOwnerPicker = () => { pickCount++; };
-  assert.equal(await launchWorkbenchSignal(plugin, signal, data), false);
-  assert.equal(pickCount, 1); assert.equal(opened.length, 2, "unassigned modules create no conversation");
+  navigation.save({ ...navigation.draft(), text: "", attachments: [] });
+  assert.equal(await launchWorkbenchSignal(plugin, signal, data), true, "a module without an owner still goes to the assistant");
   registry.moduleOwners.todos = "planner"; visible = false;
-  registry.moduleOwners["knowledge-base"] = "generalist";
   const knowledge = { ...current, moduleId: "knowledge-base" as const, id: 7 as const };
   const bindings = emptyKnowledgeFolderBindings();
   const knowledgePlugin = { ...plugin, settings: { ...plugin.settings, knowledgeBase: { folderBindings: bindings } },
@@ -81,10 +81,13 @@ export async function runWorkbenchLauncherTests(root?: string): Promise<void> {
   await assert.rejects(launchWorkbenchSignal(knowledgePlugin, knowledge, knowledgeData), error => error instanceof WorkbenchSetupRequired && error.target === "knowledge");
   bindings.roles.raw = { ...bindings.roles.raw, enabled: true, readPaths: ["raw"] };
   bindings.roles.projects = { ...bindings.roles.projects, enabled: true, readPaths: ["projects"], writePath: "projects" };
+  navigation.save({ ...navigation.draft(), text: "", attachments: [] });
   assert.equal(await launchWorkbenchSignal(knowledgePlugin, knowledge, knowledgeData), true, "legacy sources and a project output do not require reinitialization");
+  assert.equal(prefills.at(-1)![2], undefined, "raw sources go as plain text; maintenance batches stay with the knowledge owner");
   assert.equal(parseWorkbenchTaskSource("not json"), null);
   assert.equal(parseWorkbenchTaskSource(JSON.stringify({ ...source, signalId: 12 })), null);
 
+  navigation.navigate({ kind: "list", agentId: "planner" });
   navigation.save({ text: "相同文字", attachments: [], prefillSource: JSON.stringify(source) });
   const frozen = { text: "相同文字", composerTextSnapshot: "相同文字", attachments: [], prefillSource: JSON.stringify({ ...source, businessKey: "other" }) } as unknown as QueuedTurnItem;
   assert.equal(consumeAcceptedTaskDraft(workspace, "agent:planner", frozen), false, "late acceptance cannot erase a replacement intent with the same text");
@@ -113,7 +116,7 @@ export async function runWorkbenchLauncherTests(root?: string): Promise<void> {
   assert.deepEqual(details, ["task-a", "task-a", "task-a"]);
   broker.dispose();
   if (root) await workbenchSourcePipeline(root);
-  console.log("Workbench launcher: fresh dispatch, draft isolation, setup/error propagation, legacy folders, and real question broker PASS");
+  console.log("Workbench launcher: assistant prefill, draft isolation, setup/error propagation, legacy folders, and real question broker PASS");
 }
 
 async function workbenchSourcePipeline(root: string): Promise<void> {

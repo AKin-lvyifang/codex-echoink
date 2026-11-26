@@ -1,4 +1,5 @@
 import type { MobileShellPage } from "../mobile/shell-types";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "../../home/module-actions";
 import type { IPadPageContext } from "./workbench-contract";
 import { settingsErrorText } from "../../core/error-copy";
 import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
@@ -48,7 +49,7 @@ export function selectModuleSegment(track: HTMLElement, value: string): void {
   const thumb = track.querySelector<HTMLElement>(".pd-module-segment-thumb"); if (thumb) thumb.style.transform = `translateX(${index * 100}%)`;
   buttons.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.value === value)));
 }
-export function moduleView(ctx: IPadPageContext, id: string, title: string, module?: "journal" | "todos" | "finance") {
+export function moduleView(ctx: IPadPageContext, id: string, title: string, module?: "journal" | "todos" | "finance", month?: () => string) {
   const content = el(ctx.document, "div", "pd-module-page"), header = el(ctx.document, "header", "pd-module-header"), fields = el(ctx.document, "fieldset", "pd-module-fields"), body = el(ctx.document, "div", "pd-module-body"), feedback = el(ctx.document, "div", "pd-module-status"), leaveArea = el(ctx.document, "div", "pd-module-leave"), handoffArea = el(ctx.document, "div", "pd-module-handoff");
   feedback.setAttribute("role", "status"); feedback.hidden = true; fields.append(header, handoffArea, body); content.append(fields, feedback, leaveArea);
   let busy = false, disposed = false, allowed = false, nested = false, generation = 0, pendingLeave: Promise<boolean> | undefined;
@@ -85,14 +86,16 @@ export function moduleView(ctx: IPadPageContext, id: string, title: string, modu
   const back = moduleButton(ctx, "", () => ctx.shell.back(), false, "chevron-left"); back.setAttribute("aria-label", moduleText(ctx, "返回", "Back")); back.classList.add("is-icon"); header.append(back, el(ctx.document, "h1", "pd-module-title", title));
   if (module) {
     const handoff = moduleButton(ctx, "", async () => {
-      if (busy) return; const prompts = { journal: moduleText(ctx, "聊聊今天", "Let's talk about today"), todos: moduleText(ctx, "帮我把今天和本周的待办排个顺序", "Help me prioritize my to-dos for today and this week"), finance: moduleText(ctx, "看看这个月餐饮为什么快超预算了", "Review why dining spending is close to this month's budget") };
-      const send = async (replace = false) => { const result = await ctx.host.services.modules.handoff(module, prompts[module], replace); if (!view.alive) return;
+      if (busy) return; const prompt = moduleOwnerActionPrompt(module, { english: ctx.host.settings().settingsLanguage === "en", month: month?.() });
+      const send = async (replace = false) => { const result = await ctx.host.services.modules.handoff(module, prompt, replace); if (!view.alive) return;
         if (result.conflict) { moduleConfirm(ctx, handoffArea, moduleText(ctx, "这个 Agent 已有草稿，要替换吗？", "This Agent already has a draft. Replace it?"), () => view.run(() => send(true)), moduleText(ctx, "替换草稿", "Replace draft")); return; }
         handoffArea.replaceChildren(); await ctx.host.openAgent({ kind: "agent", agentId: result.agentId }); };
       await view.run(() => send());
     }, true); header.append(handoff);
-    const refreshOwner = () => { if (!view.alive) return; const owner = ctx.host.services.modules.owner(module), visible = handoff.firstElementChild!; visible.replaceChildren(ipadAvatar(ctx.document, owner), el(ctx.document, "span", "", module === "journal" ? moduleText(ctx, `和${owner.name.trim()}聊今天`, `Talk with ${owner.name}`) : module === "todos" ? moduleText(ctx, `交给${owner.name.trim()}排一排`, `Plan with ${owner.name}`) : moduleText(ctx, `交给${owner.name.trim()}`, `Ask ${owner.name}`))); };
+    const refreshOwner = () => { if (!view.alive) return; const owner = ctx.host.services.modules.owner(module), visible = handoff.firstElementChild!; visible.replaceChildren(ipadAvatar(ctx.document, owner), el(ctx.document, "span", "", moduleOwnerActionLabel(module, { english: ctx.host.settings().settingsLanguage === "en", month: month?.() }))); };
     refreshOwner(); cleanup.push(ctx.host.workbench.subscribe(refreshOwner));
+    // 财务按钮写的是所选月份；月份在页面内点击切换，点击后同步一次。
+    if (month) body.addEventListener("click", () => { void Promise.resolve().then(refreshOwner); });
   }
   return view;
 }

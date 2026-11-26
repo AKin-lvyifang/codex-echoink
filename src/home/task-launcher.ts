@@ -1,8 +1,7 @@
 import { CAUSE } from "../core/error-copy";
-import { getModuleOwner } from "../agents/registry";
 import { Notice, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { AGENT_MODULE_IDS } from "../agents/types";
+import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID } from "../agents/types";
 import type { PiConversationCatalogEntry } from "../harness/pi-native/contracts";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchTaskSource } from "./workbench-types";
 import { getWorkbenchDataService } from "./workbench-data";
@@ -26,7 +25,10 @@ export function parseWorkbenchTaskSource(value: unknown): WorkbenchTaskSource | 
   } catch { return null; }
 }
 
-/** Recheck scope and dispatch an isolated task; never send another Composer's draft. */
+/**
+ * Recheck the suggestion, then hand it to the general assistant: a new conversation with the request prefilled.
+ * Nothing is sent until the user does; the assistant routes the work to whoever fits.
+ */
 export async function launchWorkbenchSignal(
   plugin: CodexForObsidianPlugin,
   signal: WorkbenchSignal,
@@ -35,13 +37,10 @@ export async function launchWorkbenchSignal(
   const snapshot = await data.load();
   const current = snapshot.signals.find(item => item.key === signal.key && item.id === signal.id);
   if (!current) {
-    new Notice(plugin.settings.settingsLanguage === "en" ? "This reminder has been updated. Review it, then hand it off again." : "该提醒已更新。请查看最新内容后重新交给 Agent。");
+    new Notice(plugin.settings.settingsLanguage === "en" ? "This suggestion has been updated. Review it, then try again." : "该建议已更新。请查看最新内容后重试。");
     return false;
   }
-  const owner = getModuleOwner(plugin.settings.agentRegistry, current.moduleId);
-  if (!owner) { plugin.openModuleOwnerPicker(current.moduleId, () => launchWorkbenchSignal(plugin, signal, data)); return false; }
-  if (current.id === 15) { await plugin.startKnowledgeSystem(current.source.objects[1]); return true; }
-  if (current.moduleId === "knowledge-base") {
+  if (current.moduleId === "knowledge-base" && current.id !== 15) {
     const roles = plugin.settings.knowledgeBase.folderBindings?.roles;
     const exists = (path: string) => plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder;
     const sources = roles?.raw.enabled && roles.raw.readPaths.some(exists);
@@ -49,9 +48,11 @@ export async function launchWorkbenchSignal(
     if (!outcomes || current.id !== 14 && !sources) throw new WorkbenchSetupRequired(
       CAUSE.knowledgeFolderMissing[plugin.settings.settingsLanguage === "en" ? 1 : 0], "knowledge");
   }
-  const taskId = await plugin.startWorkbenchSignalTask(owner.id, current);
-  if (!taskId) throw new Error(plugin.settings.settingsLanguage === "en" ? "The task was not accepted. Try again." : "任务未能受理。请重试。");
-  return true;
+  // The source keeps the suggestion hidden while its task runs. Raw sources (7) would also start a
+  // maintenance batch in this conversation, which is the knowledge owner's work, so they go as plain text.
+  const accepted = await plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, current.prompt, current.id === 7 ? undefined : JSON.stringify(current.source));
+  // An unsent draft already in the assistant's composer is kept rather than replaced.
+  return accepted;
 }
 
 /** Keep the question's identity when another task is active in the sidebar. */

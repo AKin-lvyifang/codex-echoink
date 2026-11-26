@@ -11,6 +11,7 @@ import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financ
 import { getDecisionClient } from "../../membership/decision-client";
 import { createPiFinanceToolDefinitions } from "./pi-finance-tool-definitions";
 import { financeValueVersion } from "../../lifestyle/finance-operation-types";
+import { PiObsidianReadDeadline } from "./pi-obsidian-read-deadline";
 
 const { isDeepStrictEqual } = getDesktopUtil();
 export { OBSIDIAN_CLI_COMMANDS, normalizeObsidianCliRequest, type ObsidianCliRequest } from "./obsidian-cli-policy";
@@ -57,6 +58,7 @@ export interface PiObsidianSecurityOptions {
   receipts?: FileDomainReceiptStore;
   confirmation?: { confirm(input: ObsidianApprovalInput): Promise<boolean> };
   onApprovalExpired?(): void;
+  readTimeoutMs?: number;
   userId?: string; deviceId?: string;
 }
 interface NativeCall {
@@ -89,7 +91,10 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
   private readonly calls = new Map<string, NativeCall>();
   private readonly seen = new Set<string>();
   private port?: ObsidianNativePort;
-  constructor(private readonly options: PiObsidianSecurityOptions = {}) {}
+  readonly readDeadline: PiObsidianReadDeadline;
+  constructor(private readonly options: PiObsidianSecurityOptions = {}) {
+    this.readDeadline = new PiObsidianReadDeadline(id => this.calls.delete(id), options.readTimeoutMs);
+  }
   bindPort(port: ObsidianNativePort): void {
     if (this.port && this.port !== port) throw new Error("obsidian_port_already_bound");
     this.port = port;
@@ -105,6 +110,7 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
       const financeTool = isFinanceTool(event.toolName) ? event.toolName : undefined;
       const financeRequest = financeTool ? normalizeFinanceToolRequest(financeTool, input) : undefined;
       const effect = request ? obsidianCliEffect(request) : financeTool ? financeToolEffect(financeTool, financeRequest!) : "read";
+      if (request && effect === "read") signal?.throwIfAborted();
       const access = this.options.currentAccess?.();
       if (effect !== "read" && (!access || access.mode === "plan" || access.permission === "read-only")) throw new Error("tool_policy_blocked");
       const call: NativeCall = { toolName: event.toolName as PiObsidianToolId, input, effect, state: "authorized" };
@@ -165,6 +171,7 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
           await receipts.beginAuthorizedOperation(call.authorization);
         }
       }
+      if (request && effect === "read") signal?.throwIfAborted();
       this.calls.set(event.toolCallId, call);
     } catch (error) {
       const code = error instanceof Error ? error.message : "tool_policy_blocked";

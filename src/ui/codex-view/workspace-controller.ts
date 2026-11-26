@@ -9,7 +9,7 @@ import {
 } from "../../settings/settings";
 import { buildActiveEchoInkResourceCatalog, hasEnabledMcpResources, workspaceResourcesFromEchoInkResources } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
-import type { PermissionMode, UiMode } from "../../types/app-server";
+import type { PermissionMode, ReasoningEffort, UiMode } from "../../types/app-server";
 import { showItemInFinder } from "../../core/electron";
 import { textInputModal } from "../modals";
 import { openWorkspaceMenu as showWorkspaceMenu } from "./menus";
@@ -24,6 +24,7 @@ export interface CodexWorkspaceHost {
   readonly runningSessionIds: ReadonlySet<string>;
   selectedProviderSettingsId: string;
   selectedModel: string;
+  readonly selectedReasoning?: ReasoningEffort;
   selectedPermission: PermissionMode;
   selectedMode: UiMode;
   ensureSession(): StoredSession;
@@ -135,7 +136,8 @@ export function currentTurnOptions(host: CodexWorkspaceHost, session?: StoredSes
   const reasoning = resolveComposerReasoningState(
     host.plugin.settings,
     host.selectedProviderSettingsId,
-    model
+    model,
+    host.selectedReasoning
   );
   return {
     ...(cwd ? { cwd } : {}),

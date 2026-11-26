@@ -139,18 +139,18 @@ function exactDiaryCapabilityRegression(root: string): void {
   };
   const target = { sourcePath: SOURCE, englishPath: "outputs/英文日记/result.md", journalId: "fixture-journal" };
   const generate = (ctx: AgentCapabilityContext) => checkAgentTool(ctx, "english_diary_generate", { sourcePath: SOURCE }, target);
-  assert.equal(checkAgentCapability(context, "knowledge").allowed, false, "the test Agent really has no Knowledge grant");
+  assert.equal(checkAgentCapability(context, "knowledge").allowed, false, "Knowledge folders are off in this fixture");
   assert.equal(generate(context).allowed, true, "the precise English output root overrides its generic Knowledge parent");
-  assert.equal(checkAgentTool({ ...context, companyRole: "worker" }, "note_update", { relativePath: "outputs/unrelated.md" }).reason, "folder_grant_required", "the exact diary grant does not open the rest of outputs to a dispatched worker");
+  // 2026-11-25: dispatched non-expert workers write ordinary folders without an assistant grant.
+  assert.equal(checkAgentTool({ ...context, companyRole: "worker" }, "note_update", { relativePath: "outputs/unrelated.md" }).allowed, true, "a dispatched worker writes the rest of outputs");
   const journalRevoked = structuredClone(settings);
   journalRevoked.agentRegistry.agents.find(agent => agent.id === "diary-only")!.capabilityIds = ["english-diary"];
   assert.equal(generate({ ...context, settings: journalRevoked }).allowed, true, "reading the source diary needs no journal grant; only the English output is owned");
   for (const disabled of ["english-diary"]) {
     const deniedSettings = structuredClone(settings);
     deniedSettings.agentRegistry.agents.find(agent => agent.id === "diary-only")!.capabilityIds = ["journal", "english-diary"].filter(capability => capability !== disabled);
-    const denied = generate({ ...context, settings: deniedSettings });
-    assert.equal(denied.allowed, false, `Agent ${disabled} capability is required`);
-    assert.equal(denied.reason, "agent_disabled");
+    // 2026-11-25: module work is built into every non-expert Agent, so a missing grant no longer denies it.
+    assert.equal(generate({ ...context, settings: deniedSettings }).allowed, true, `no ${disabled} grant is needed`);
   }
   const englishOff = structuredClone(settings); englishOff.englishDiary.enabled = false;
   assert.equal(generate({ ...context, settings: englishOff }).reason, "module_disabled");

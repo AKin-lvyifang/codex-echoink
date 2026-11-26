@@ -1,5 +1,6 @@
 import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { isCommunityExpert, type ExpertSource } from "../experts/source";
+import type { ReasoningEffort } from "../types/app-server";
 
 export const GENERAL_ASSISTANT_ID = "sol";
 /** Default worker: inherits everything the general assistant could do before it became a router. */
@@ -9,10 +10,15 @@ export const usesDisabledCapabilityList = (agentId: string): boolean => agentId 
 export const isUndeletableAgent = usesDisabledCapabilityList;
 const BASIC_AGENT_CAPABILITIES = new Set(["conversation", "memory", "vault-notes", "web-search"]);
 export const isBasicAgentCapability = (id: string): boolean => BASIC_AGENT_CAPABILITIES.has(id);
+/** Built-in work every hired, non-expert Agent may do; module switches, PRO and access modes still apply per action. */
+const BUILTIN_AGENT_CAPABILITIES = new Set([...BASIC_AGENT_CAPABILITIES, "journal", "todos", "finance", "knowledge", "english-diary", "pdf-reading", "review", "obsidian-plugins"]);
+export const isBuiltinAgentCapability = (id: string): boolean => BUILTIN_AGENT_CAPABILITIES.has(id);
 export function isCommunityExpertAgent(agent?: Pick<AgentDefinition, "expert">): boolean {
   return !!agent?.expert && isCommunityExpert(agent.expert.expertId, agent.expert.source);
 }
-export function hasAgentCapabilityGrant(agent: Pick<AgentDefinition, "id" | "capabilityIds" | "disabledCapabilityIds" | "expert">, id: string): boolean {
+export function hasAgentCapabilityGrant(agent: Pick<AgentDefinition, "id" | "capabilityIds" | "disabledCapabilityIds" | "expert"> & { kind?: AgentDefinition["kind"] }, id: string): boolean {
+  // Legacy per-Agent opt-outs of built-in work have no editor anymore, so they are not honored.
+  if (agent.kind !== "expert" && !agent.expert && isBuiltinAgentCapability(id)) return true;
   const basic = isBasicAgentCapability(id) && !(id === "web-search" && isCommunityExpertAgent(agent));
   return !agent.disabledCapabilityIds?.includes(id)
     && (basic || usesDisabledCapabilityList(agent.id) || agent.capabilityIds?.includes(id) === true);
@@ -55,6 +61,14 @@ export interface ExpertAgentState {
 
 export type CompanyApprovalMode = "user" | "assistant";
 
+/** The Agent's own model; a manual switch inside one conversation never writes back here. */
+export interface AgentModelPreference {
+  providerSettingsId: string;
+  modelId: string;
+  /** Absent means the model's own default effort. "none" turns reasoning off. */
+  reasoning?: ReasoningEffort;
+}
+
 export interface AgentDefinition {
   id: string;
   name: string;
@@ -67,8 +81,8 @@ export interface AgentDefinition {
   persona?: string;
   /** Only the main Agent owns the company approval preference. */
   companyApprovalMode?: CompanyApprovalMode;
-  /** Main Agent only: may open extra folders to workers when dispatching. Absent means on. */
-  companyFolderGrants?: boolean;
+  /** Absent means the Agent follows the model chosen in the current conversation. */
+  model?: AgentModelPreference;
   kind?: "custom" | "expert";
   expert?: ExpertAgentState;
   /** Opt-in grants for specialized capabilities. Legacy basic grants are ignored by tools. */

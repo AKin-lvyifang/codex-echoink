@@ -2473,7 +2473,7 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
 .echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check){width:30px;height:30px;min-height:30px;padding:0;flex:none}
 .echoink-settings-desktop .echoink-about-compact-actions>button:not(.echoink-about-compact-check) svg{width:14px;height:14px}
 /* Existing About Amicro btn-2 sparkle and btn-24 icon swap, scoped to the compact row. */
-.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-wrap,.echoink-about-morph-icon-wrap){
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) :is(.echoink-sparkle-icon-wrap,.echoink-about-morph-icon-wrap){
   position:relative;
   display:inline-flex;
   align-items:center;
@@ -2482,7 +2482,7 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
   height:14px;
   flex:0 0 14px;
 }
-.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover,.echoink-about-morph-icon-default,.echoink-about-morph-icon-hover){
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover,.echoink-about-morph-icon-default,.echoink-about-morph-icon-hover){
   position:absolute;
   inset:0;
   display:flex;
@@ -2490,55 +2490,55 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
   justify-content:center;
   pointer-events:none;
 }
-.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-about-morph-icon-default,.echoink-about-morph-icon-hover){
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) :is(.echoink-about-morph-icon-default,.echoink-about-morph-icon-hover){
   transition-property:var(--echoink-motion-transition-property, opacity,transform,filter);
   transition-duration:var(--echoink-motion-transition-duration, 180ms);
   transition-timing-function:cubic-bezier(.2,0,0,1);
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-morph-icon-default{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-morph-icon-default{
   opacity:1;
   transform:scale(1);
   filter:blur(0);
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-morph-icon-hover{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-morph-icon-hover{
   opacity:0;
   transform:scale(.25);
   filter:blur(4px);
   color:var(--color-green);
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-website .echoink-about-morph-icon-hover{color:var(--color-blue)}
-.echoink-settings-desktop .echoink-about-compact-actions>button:is(:hover,:focus-visible,:active) .echoink-about-morph-icon-default{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-compact-website .echoink-about-morph-icon-hover{color:var(--color-blue)}
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions)>button:is(:hover,:focus-visible,:active) .echoink-about-morph-icon-default{
   opacity:0;
   transform:scale(.25);
   filter:blur(4px);
 }
-.echoink-settings-desktop .echoink-about-compact-actions>button:is(:hover,:focus-visible,:active) .echoink-about-morph-icon-hover{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions)>button:is(:hover,:focus-visible,:active) .echoink-about-morph-icon-hover{
   opacity:1;
   transform:scale(1);
   filter:blur(0);
 }
-.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover){
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover){
   transition:var(--echoink-motion-transition, opacity 250ms cubic-bezier(.34,1.56,.64,1),transform 250ms cubic-bezier(.34,1.56,.64,1));
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-icon-default{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-sparkle-icon-default{
   opacity:1;
   transform:translateY(0);
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-icon-hover{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-sparkle-icon-hover{
   opacity:0;
   transform:translateY(15px);
   color:var(--color-yellow);
 }
-.echoink-settings-desktop .echoink-about-compact-actions :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover,.echoink-sparkle-particle)>svg{fill:currentColor;stroke:none}
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-icon-default{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) :is(.echoink-sparkle-icon-default,.echoink-sparkle-icon-hover,.echoink-sparkle-particle)>svg{fill:currentColor;stroke:none}
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-icon-default{
   opacity:0;
   transform:translateY(-15px);
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-icon-hover{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-icon-hover{
   opacity:1;
   transform:translateY(0);
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-particle{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-sparkle-particle{
   position:absolute;
   display:flex;
   align-items:center;
@@ -2549,11 +2549,11 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
   color:var(--color-yellow);
   pointer-events:none;
 }
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-p1{top:-8px;right:-6px;transition-delay:var(--echoink-motion-transition-delay, 50ms)}
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-sparkle-p2{top:-4px;right:-10px;transition-delay:var(--echoink-motion-transition-delay, 100ms)}
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star .echoink-sparkle-p1>svg{width:8px;height:8px}
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star .echoink-sparkle-p2>svg{width:6px;height:6px}
-.echoink-settings-desktop .echoink-about-compact-actions .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-particle{
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-sparkle-p1{top:-8px;right:-6px;transition-delay:var(--echoink-motion-transition-delay, 50ms)}
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-sparkle-p2{top:-4px;right:-10px;transition-delay:var(--echoink-motion-transition-delay, 100ms)}
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-compact-star .echoink-sparkle-p1>svg{width:8px;height:8px}
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-compact-star .echoink-sparkle-p2>svg{width:6px;height:6px}
+:is(.echoink-settings-desktop .echoink-about-compact-actions,.echoink-star-actions) .echoink-about-compact-star:is(:hover,:focus-visible,:active) .echoink-sparkle-particle{
   opacity:1;
   transform:scale(1) rotate(0);
 }

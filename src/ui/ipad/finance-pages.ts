@@ -9,7 +9,7 @@ import { el, moduleButton, moduleEmpty, moduleView, moduleText as t } from "./mo
 /** iPad owns the pane/header; the original financial UI owns the complete body. */
 export function createFinancePage(ctx: IPadPageContext): MobileShellPage {
   const lifestyle = ctx.host.services.lifestyle, finance = lifestyle.finance;
-  const view = moduleView(ctx, "module:finance", t(ctx, "财务", "Finance"), "finance"), workspace = new FinanceWorkspace(lifestyle);
+  const workspace = new FinanceWorkspace(lifestyle), view = moduleView(ctx, "module:finance", t(ctx, "财务", "Finance"), "finance", () => workspace.getSelectedMonth());
   view.content.classList.add("pd-finance-page");
   const shell = el(ctx.document, "div", "echoink-life-shell echoink-life-finance pd-finance-workspace-shell"), body = el(ctx.document, "div", "echoink-life-body"); shell.append(body); view.body.append(shell);
   const settings = moduleButton(ctx, t(ctx, "设置", "Settings"), () => view.push(createFinanceSettingsPage(ctx)));

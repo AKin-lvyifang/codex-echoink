@@ -64,9 +64,27 @@ export interface MembershipEntitlements {
 export interface PointsSummary {
   balanceMilli: number;
   balance: string;
+  activeTotal?: string | number | null;
   nextExpiry: { at: number; milli: number; points: string } | null;
   batches: { id: string; kind: string; points: string; remaining: string; startsAt: number; expiresAt: number; state: "available" | "scheduled" | "expired"; note: string }[];
   serverTime: number;
+}
+export interface GiftNotice {
+  id: string;
+  kind: "gift";
+  title: string;
+  points: number;
+  desc: string;
+  grantsOnClaim: boolean;
+}
+export interface GiftReceipt {
+  granted: boolean;
+  points: number;
+  balance: string;
+  expiresAt: number;
+}
+export interface AccountNotices {
+  notices: GiftNotice[];
 }
 export interface PointsHistory {
   items: { id: string; status: string; tier: string; fallback: boolean; points: string; tokens: { input: number; output: number; cached: number }; createdAt: number }[];

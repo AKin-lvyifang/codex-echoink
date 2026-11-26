@@ -56,6 +56,7 @@ try {
     'import {cloneQueuedTurnItem} from "./src/ui/turn-queue";',
     'import {frozenTurnReasoningSelectionIsValid} from "./src/ui/codex-view/turn-runner";',
     'import {resolveComposerReasoningState} from "./src/ui/composer-reasoning";',
+    'import {resolveAgentModelSelection} from "./src/agents/agent-model";',
     'import {assertPiSubmissionActive} from "./src/harness/pi-native/pi-submission-lifecycle";',
     'import {getActiveApiProviderModel,getApiProviderModel,apiProviderHasUsableCredential,validateApiProvider,newId} from "./src/settings/settings";',
     'import {GENERAL_ASSISTANT_ID,GENERALIST_AGENT_ID} from "./src/agents/types";',

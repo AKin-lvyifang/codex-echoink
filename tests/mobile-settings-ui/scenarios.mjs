@@ -145,8 +145,9 @@ export async function runMobileSettingsScenarios(api, win) {
     await until(()=>[...root.querySelectorAll('.ip-agent-form,.pd-agent-form')].some(visible),'module creation opens');
     const form=[...root.querySelectorAll('.ip-agent-form,.pd-agent-form')].find(visible);
     await until(()=>form.querySelector('input[type="text"]'),'creation ready');
+    // 2026-11-25: module tools are built into every non-expert Agent, so the form no longer lists or locks them.
     const moduleCheck=form.querySelector('[class$="agent-module-grid"] input[data-module-id="pdf-reading"]'),cap=form.querySelector('[class$="agent-capabilities"] input[aria-label="PDF 精读"]');
-    assert.equal(moduleCheck.checked,true);assert.equal(cap.checked,true);assert.equal(cap.disabled,true);assert.equal(button(root,'创建').disabled,true);
+    assert.equal(moduleCheck.checked,true);assert.equal(cap,null);assert.equal(button(root,'创建').disabled,true);
     assert.equal(form.querySelector('[class$="agent-avatar-expanded"]').hidden,true,'avatars start collapsed');await click(root,'更换');assert.equal(form.querySelectorAll('[class$="avatar-picker"] button').length,15);
     const name='模块验收员工'+width;field(win,form,'名字',name);field(win,form,'一句话简介','只写这一轮的验收资料');
     field(win,form,'人格正文','𠮷'.repeat(4002));assert.equal([...form.querySelector('[aria-label="人格正文"]').value].length,4002);

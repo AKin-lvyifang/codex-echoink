@@ -71,7 +71,8 @@ export async function runMobileCapabilityScenarios(api) {
     assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "输出/生成.md" }), "direct chat may write ordinary folders without the Knowledge switch");
     f.grant.disabledCapabilityIds.push("journal");
     assert.equal(f.policy.canReadPath("Daily/今日.md"), true, "reading needs no module grant");
-    assert.throws(() => f.policy.assertTool("note_create", { path: "Daily/新.md" }), code(/agent_disabled:journal/u), "writing the journal still needs it");
+    // 2026-11-25: legacy per-Agent module opt-outs no longer narrow non-expert Agents.
+    assert.throws(() => f.policy.assertTool("note_create", { path: "Daily/新.md" }), code(/module_disabled:journal/u), "a legacy opt-out no longer decides; only the journal's own state does");
     f.grant.disabledCapabilityIds = [];
     f.settings.mobileUi.moduleEnabled = { "knowledge-base": false };
     assert.equal(f.policy.canReadPath("普通/笔记.md"), true);
@@ -107,20 +108,19 @@ export async function runMobileCapabilityScenarios(api) {
     f.search.dispose();
   });
 
-  await test("default journal access, explicit per-Agent opt-out and specialized grants gate direct tools", async () => {
-    const f = await setup(); const writer = tool(f, "note_create");
+  // 2026-11-25: module work is built into every non-expert Agent; legacy opt-outs and missing grants no longer narrow writes.
+  await test("default journal access and open module writes for every non-expert Agent", async () => {
+    const f = await setup();
     assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "journal/默认.md" }));
     f.grant.disabledCapabilityIds = ["journal"];
-    await assert.rejects(writer.execute("write", { path: "journal/越权.md", content: "不能写" }, signal()), code(/agent_disabled:journal/u));
-    await assert.rejects(writer.execute("write", { path: "finance/transactions/越权.md", content: "不能写" }, signal()), code(/agent_disabled:finance/u));
-    assert.equal(f.calls.folders.length, 0); assert.equal(f.calls.create.length, 0);
+    assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "journal/默认.md" }), "a legacy journal opt-out no longer blocks diary writes");
     f.grant.capabilityIds = [];
     assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "raw/普通.md" }), "ordinary folders do not need the Knowledge grant");
     const sol = await setup({ agentId: "sol" });
     sol.grant.disabledCapabilityIds.push("knowledge");
     assert.doesNotThrow(() => sol.policy.assertTool("note_create", { path: "raw/普通.md" }));
     const worker = await setup(); worker.grant.capabilityIds = ["journal"];
-    assert.throws(() => new worker.policy.constructor({ ...worker.policy.options, companyRole: "worker" }).assertTool("note_create", { path: "raw/普通.md" }), code(/folder_grant_required/u), "a dispatched worker needs the assistant's grant");
+    assert.doesNotThrow(() => new worker.policy.constructor({ ...worker.policy.options, companyRole: "worker" }).assertTool("note_create", { path: "raw/普通.md" }), "a dispatched worker writes ordinary folders without the assistant's grant");
     assert.doesNotThrow(() => new worker.policy.constructor({ ...worker.policy.options, companyRole: "worker", folderGrants: () => ["raw"] }).assertTool("note_create", { path: "raw/普通.md" }));
     worker.search.dispose();
     f.search.dispose(); sol.search.dispose();
@@ -161,7 +161,8 @@ export async function runMobileCapabilityScenarios(api) {
     assert.doesNotThrow(() => f.policy.assertSkill("daily-journal"));
     assert.doesNotThrow(() => f.policy.assertSkill("clarify-real-question"));
     const restricted = await setup();
-    assert.throws(() => restricted.policy.assertSkill("daily-journal"), code(/agent_disabled:journal/u));
+    // 2026-11-25: module Skills follow built-in module work, open to every non-expert Agent.
+    assert.doesNotThrow(() => restricted.policy.assertSkill("daily-journal"));
     restricted.search.dispose();
     f.settings.resources.legacyEnabledOverrides = { "daily-journal": false };
     assert.throws(() => f.policy.assertSkill("daily-journal"), code(/resource_disabled/u));
@@ -190,7 +191,7 @@ export async function runMobileCapabilityScenarios(api) {
     const sol = f.settings.agentRegistry.agents.find(agent => agent.id === "sol");
     const beforeWebGrant = sol.disabledCapabilityIds;
     sol.disabledCapabilityIds = [...(beforeWebGrant ?? []), "web-search"];
-    assert.throws(() => f.policy.assertTool("web_search", {}), code(/agent_disabled:web-search/u));
+    assert.doesNotThrow(() => f.policy.assertTool("web_search", {}), "a legacy web opt-out no longer narrows the assistant");
     sol.disabledCapabilityIds = beforeWebGrant;
     f.settings.tavily = { enabled: false, apiKey: "" };
     for (const name of ["pdf_reading_query", "pdf_reading_process"]) assert.throws(() => f.policy.assertTool(name, {}), code(/module_disabled/u));
@@ -215,25 +216,27 @@ export async function runMobileCapabilityScenarios(api) {
       assert.equal(f.policy.canReadPath(path), false);
       await assert.rejects(write.execute("write", { path, content: "禁止" }, signal()));
     }
-    f.grant.disabledCapabilityIds = ["journal"];
+    // 2026-11-25: per-Agent module opt-outs are gone; switching the journal module off is the revocation tested here.
+    f.settings.mobileUi.moduleEnabled = { journal: false };
     const oldSignature = f.policy.signature();
     f.settings.knowledgeBase.folderBindings.roles.journal.readPaths = ["raw"];
     f.settings.knowledgeBase.folderBindings.revision++;
     assert.notEqual(f.policy.signature(), oldSignature);
-    await assert.rejects(write.execute("write", { path: "raw/改绑后禁止.md", content: "禁止" }, signal()), code(/agent_disabled:journal/u));
+    await assert.rejects(write.execute("write", { path: "raw/改绑后禁止.md", content: "禁止" }, signal()), code(/module_disabled:journal/u));
     assert.equal(f.calls.create.length, 0); assert.equal(f.calls.folders.length, 0); f.search.dispose();
   });
 
   await test("revocation while exists awaits prevents mkdir/create; every later mkdir boundary is checked", async () => {
     // Writes into a module folder are what a capability revocation can still stop.
     const f = await setup(), write = tool(f, "note_create"), exists = f.adapter.exists.bind(f.adapter);
-    f.adapter.exists = async path => { if (path.endsWith("禁止.md")) f.grant.disabledCapabilityIds = ["journal"]; return exists(path); };
-    await assert.rejects(write.execute("write", { path: "journal/新目录/禁止.md", content: "禁止" }, signal()), code(/agent_disabled/u));
+    // 2026-11-25: the journal module switch replaces the retired per-Agent opt-out as the live revocation.
+    f.adapter.exists = async path => { if (path.endsWith("禁止.md")) f.settings.mobileUi.moduleEnabled = { journal: false }; return exists(path); };
+    await assert.rejects(write.execute("write", { path: "journal/新目录/禁止.md", content: "禁止" }, signal()), code(/module_disabled/u));
     assert.equal(f.calls.folders.length, 0); assert.equal(f.calls.create.length, 0);
-    f.grant.disabledCapabilityIds = [];
+    f.settings.mobileUi.moduleEnabled = {};
     const mkdir = f.app.vault.createFolder;
-    f.app.vault.createFolder = async path => { await mkdir(path); f.grant.disabledCapabilityIds = ["journal"]; };
-    await assert.rejects(write.execute("write", { path: "journal/新目录2/次级/禁止2.md", content: "禁止" }, signal()), code(/agent_disabled/u));
+    f.app.vault.createFolder = async path => { await mkdir(path); f.settings.mobileUi.moduleEnabled = { journal: false }; };
+    await assert.rejects(write.execute("write", { path: "journal/新目录2/次级/禁止2.md", content: "禁止" }, signal()), code(/module_disabled/u));
     assert.equal(f.calls.folders.length, 1); assert.equal(f.calls.create.length, 0); f.search.dispose();
   });
 
@@ -278,7 +281,8 @@ export async function runMobileCapabilityScenarios(api) {
       const before = f.policy.signature(); change(); assert.notEqual(f.policy.signature(), before);
     }
     assert.deepEqual([...snapshot.capabilityIds], ["knowledge"]);
-    assert.throws(() => f.policy.assertTool("note_create", { path: "journal/禁止.md" }), code(/agent_disabled/u)); f.search.dispose();
+    // 2026-11-25: the stale snapshot grants nothing, and the live journal opt-out no longer narrows a non-expert Agent.
+    assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "journal/允许.md" })); f.search.dispose();
   });
 
   await test("legacy direct fixture calls default safely to sol and do not grant non-sol or paid writes", async () => {

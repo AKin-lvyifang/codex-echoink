@@ -18,11 +18,11 @@ export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNo
   const icon = row.createSpan({ cls: "wb-lead is-warning", attr: { "aria-hidden": "true" } });
   setIcon(icon, "circle-alert");
   const copy = row.createDiv({ cls: "wb-grow" });
-  copy.createDiv({ text: t("这份记忆不属于当前库，暂时没有读取。", "This memory does not belong to this vault and has not been loaded.") });
+  copy.createDiv({ text: t("记忆文件未能加载，不属于当前笔记库。请重新建立或沿用现有记忆。", "The memory file was not loaded because it does not belong to this vault. Start fresh or use the existing memory.") });
   const reason = userFacingErrorText(notice.reason, "", language === "en" ? "en" : "zh");
   if (reason) {
     const details = copy.createEl("details");
-    details.createEl("summary", { text: t("查看原因", "Details") });
+    details.createEl("summary", { text: t("查看详情", "Details") });
     details.createDiv({ text: reason });
   }
   const controls = row.createDiv({ cls: "wb-memory-notice-actions" });
@@ -68,6 +68,6 @@ export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNo
     row.hidden = true;
     confirmation[0]?.addEventListener("click", () => { row.hidden = false; });
   };
-  const primary = button(t("沿用这份记忆", "Use this memory"), "primary");
+  const primary = button(t("沿用现有记忆", "Use existing memory"), "primary");
   primary.onclick = () => { void run(primary, t("正在恢复…", "Restoring…"), () => actions.resolve("adopt")); };
 }

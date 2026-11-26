@@ -51,7 +51,7 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
         ? tool("note_update", { relativePath: diary, expectedVersion: "missing", content: "must never write" })
         : call === 1 ? tool("knowledge_maintain", { stage: "plan", writingPlan: [{ targetPath: diary, sourcePaths: [diary] }] }) : undefined);
       assert.equal(denied.terminalState, "failed");
-      assert.match(String(denied.error), /agent_capability_agent_disabled:journal/u);
+      assert.match(String(denied.error), /agent_capability_module_disabled:journal/u);
       assert.equal(await fs.readFile(path.join(f.vault, diary), "utf8"), original);
     }
     const completed = await f.run(request, { maintenanceScope: batch }, diary, "diary");
@@ -812,9 +812,10 @@ async function fixture(root: string, name: string, emptyRaw = false) {
     useDiaryOrganizer: async (enabled: boolean) => {
       const directory = "00-日记库";
       bindings.roles.raw.readPaths.push(directory);
-      bindings.roles.journal = { enabled: true, readPaths: [directory], writePath: directory, allowedSubdirectories: [] };
+      // 2026-11-25: per-Agent journal opt-outs are gone; a read-only diary now means the journal module itself is off.
+      bindings.roles.journal = { enabled, readPaths: [directory], writePath: directory, allowedSubdirectories: [] };
       settings.agentRegistry.agents.push({ id: "organizer", name: "整理员", avatar: { kind: "default" }, position: "", styleId: "analysis",
-        capabilityIds: ["knowledge"], ...(enabled ? {} : { disabledCapabilityIds: ["journal"] }) });
+        capabilityIds: ["knowledge"] });
       const entry = (await catalog.get("followup"))!;
       await catalog.updateTaskMetadata(entry.conversationId, { agentId: "organizer" }, entry.taskMetadataUpdatedAt, Date.now());
     },

@@ -41,10 +41,73 @@ import { rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { createHash } from "node:crypto";
 import { createApiProviderConfig, createApiProviderModelConfig, activateApiProviderModel, DEFAULT_SETTINGS } from "../settings/settings";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { agentReasoningChoices, resolveAgentModelSelection, withAgentModel } from "../agents/agent-model";
+import { normalizeAgentRegistry } from "../agents/registry";
+import { resolveComposerReasoningState } from "../ui/composer-reasoning";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { runOrdinaryNoteReadCapabilityTests } from "./ordinary-note-read-capabilities";
 
+/** 2026-11-25: the assistant may manage Obsidian plugins directly; everything else stays dispatch-only. */
+function routerPluginCapabilityTests(): void {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.agentRegistry.agents.push({ id: "plain", name: "同事", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: [] });
+  const base: AgentCapabilityContext = { settings, agentId: "sol", vaultRoot: "/synthetic/router-plugins", resources: [], access: { permission: "workspace-write", mode: "agent", memoryMode: "normal" } };
+  const router = { ...base, companyRole: "router" as const };
+  assert.equal(checkAgentTool(router, "obsidian_plugin_search", { query: "calendar", limit: 5 }).allowed, true, "the assistant searches the plugin directory");
+  assert.equal(checkAgentTool(router, "obsidian_cli").allowed, true, "the CLI tool is published to the assistant");
+  assert.equal(checkAgentTool(router, "obsidian_cli", { command: "plugin:install", id: "calendar", enable: true }).allowed, true, "the assistant installs plugins itself");
+  assert.equal(checkAgentTool(router, "obsidian_cli", { command: "plugins" }).allowed, true);
+  assert.equal(checkAgentTool(router, "obsidian_cli", { command: "read", path: "a.md" }).reason, "router_only", "other CLI work is still dispatched");
+  assert.equal(checkAgentTool(router, "note_create", { relativePath: "a.md" }).reason, "router_only");
+  assert.equal(checkAgentTool({ ...router, access: { permission: "read-only", mode: "agent", memoryMode: "normal" } }, "obsidian_cli", { command: "plugin:install", id: "calendar" }).reason, "read_only", "read-only still blocks plugin changes");
+  assert.equal(checkAgentTool({ ...router, agentId: "plain" }, "obsidian_plugin_search", { query: "x" }).reason, "agent_disabled", "only the assistant can be a router");
+  assert.equal(checkAgentTool({ ...base, agentId: "plain" }, "obsidian_plugin_search", { query: "x" }).allowed, true, "every non-expert Agent manages plugins");
+  assert.equal(checkAgentTool({ ...base, agentId: "plain" }, "todo_query", {}).reason === "agent_disabled", false, "module tools need no grant");
+  console.log("PASS assistant plugin exception, router-only boundary and built-in module work for every Agent");
+}
+
+/** 2026-11-25: per-Agent model and effort; absent follows the conversation. */
+function agentModelTests(): void {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const provider = createApiProviderConfig("deepseek", "agent-model-provider"); provider.apiKey = "sk-synthetic-agent-model-0000000000";
+  settings.apiProviders = [provider];
+  const model = provider.models[0], sol = settings.agentRegistry.agents[0];
+  const turn = { providerSettingsId: "conversation", runtimeProviderId: "conversation-runtime", model: "conversation-model", reasoning: "none" as const };
+  assert.equal(resolveAgentModelSelection(settings, "sol"), null, "an Agent without a model follows the conversation");
+  assert.equal(withAgentModel(settings, "sol", turn), turn);
+  sol.model = { providerSettingsId: provider.id, modelId: model.id };
+  assert.equal(resolveAgentModelSelection(settings, "sol")?.modelId, model.id);
+  const applied = withAgentModel(settings, "sol", turn);
+  assert.equal(applied.providerSettingsId, provider.id); assert.equal(applied.model, model.id); assert.equal(applied.runtimeProviderId, provider.runtimeProviderId);
+  assert.equal(withAgentModel(settings, "generalist", turn), turn, "other Agents keep the conversation model");
+  const choices = agentReasoningChoices(provider, model);
+  if (choices.kind !== "none") {
+    const effort = choices.options[choices.options.length - 1];
+    sol.model = { providerSettingsId: provider.id, modelId: model.id, reasoning: effort };
+    assert.equal(resolveAgentModelSelection(settings, "sol")?.reasoning, effort);
+    assert.equal(withAgentModel(settings, "sol", turn).reasoning, effort, "the Agent's own effort reaches the turn");
+    assert.equal(resolveComposerReasoningState(settings, provider.id, model.id, effort)?.effort, effort, "the conversation shows the Agent's effort");
+    assert.equal(model.reasoningEffort, undefined, "the Agent's effort never rewrites the model settings");
+  }
+  sol.model = { providerSettingsId: provider.id, modelId: model.id, reasoning: "bogus" as never };
+  assert.equal(resolveAgentModelSelection(settings, "sol")?.reasoning, undefined, "an illegal effort falls back to the model default");
+  sol.model = { providerSettingsId: "removed", modelId: "gone" };
+  assert.equal(resolveAgentModelSelection(settings, "sol"), null, "a removed model falls back to the conversation");
+  provider.apiKey = ""; sol.model = { providerSettingsId: provider.id, modelId: model.id };
+  assert.equal(resolveAgentModelSelection(settings, "sol"), null, "a signed-out model falls back to the conversation");
+  const registry = normalizeAgentRegistry({ ...settings.agentRegistry, agents: [
+    { ...sol, model: { providerSettingsId: " p ", modelId: "m", reasoning: "bogus" }, companyFolderGrants: false },
+    { id: "legacy", name: "旧同事", avatar: { kind: "default" }, position: "", styleId: "execution", model: { providerSettingsId: "p" } }
+  ] });
+  assert.deepEqual(registry.agents[0].model, { providerSettingsId: "p", modelId: "m" });
+  assert.equal("companyFolderGrants" in registry.agents[0], false, "the retired folder switch is dropped on load");
+  assert.equal(registry.agents.find(agent => agent.id === "legacy")?.model, undefined, "an incomplete model means follow the conversation");
+  console.log("PASS Agent model/effort resolution, conversation fallback and registry compatibility");
+}
+
 export async function runAgentCapabilitiesTests(root: string): Promise<void> {
+  routerPluginCapabilityTests();
+  agentModelTests();
   runDesktopDirectoryCapabilityTests();
   assert.ok(root && path.basename(root).startsWith("capabilities-run-"));
   await runOrdinaryNoteReadCapabilityTests(path.join(root, "ordinary-note-read"));
@@ -72,7 +135,8 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds = [];
   assert.deepEqual(snapshot.capabilityIds, ["knowledge", "web-search"]);
   agentId = "organizer";
-  assert.equal(checkAgentCapability(context(), "knowledge").reason, "agent_disabled");
+  // 2026-11-25: module work is built into every non-expert Agent; grants and legacy opt-outs no longer narrow it.
+  assert.equal(checkAgentCapability(context(), "knowledge").allowed, true, "module work needs no per-Agent grant");
   const organizer = settings.agentRegistry.agents.find(agent => agent.id === "organizer")!;
   const diary = "journal/synthetic.md";
   assert.equal(checkAgentTool(context(), "note_update", { relativePath: "ordinary/synthetic.md" }).allowed, true);
@@ -83,14 +147,14 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(checkAgentTool(context(), "knowledge_maintain", { stage: "decompose", decompositions: [
     { sourcePath: diary, units: [{ evidence: [{ sourcePath: diary }] }] }
   ] }).allowed, true);
-  assert.equal(checkAgentTool(context(), "note_update", { relativePath: diary }).reason, "agent_disabled");
+  assert.equal(checkAgentTool(context(), "note_update", { relativePath: diary }).allowed, true, "a legacy journal opt-out no longer blocks diary writes");
   assert.equal(checkAgentTool(context(), "knowledge_maintain", { stage: "plan", writingPlan: [
     { targetPath: diary, sourcePaths: [diary] }
-  ] }).reason, "agent_disabled");
+  ] }).allowed, true);
   assert.equal(checkAgentTool({ ...context(), access: { ...access, permission: "read-only" } }, "knowledge_maintain", { stage: "write", pageId: "p" }).reason, "read_only");
   organizer.disabledCapabilityIds = [];
   settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds = ["knowledge", "web-search"];
-  assert.equal(checkAgentTool(context(), "finance_query", { action: "records" }).allowed, false);
+  assert.equal(checkAgentTool(context(), "finance_query", { action: "records" }).allowed, true, "finance work is open without a finance grant");
   assert.equal(checkAgentTool(context(), "task_update", {}).allowed, true);
   assert.equal(checkAgentTool(context(), "memory_read", {}).allowed, true);
   assert.equal(checkAgentTool(context(), "bash", {}).reason, "unknown_tool");
@@ -98,7 +162,7 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.throws(() => resolveAgentRunSnapshot(settings, "deleted-agent"), /agent_capability_agent_missing/);
   agentId = "sol";
   sol.disabledCapabilityIds = ["knowledge"];
-  assert.equal(checkAgentTool(context(), "knowledge_maintain", {}).allowed, false);
+  assert.equal(checkAgentTool(context(), "knowledge_maintain", {}).allowed, true, "a legacy Knowledge opt-out no longer narrows the assistant");
   sol.disabledCapabilityIds = [];
   console.log("PASS current registry, immutable audit snapshot, ordinary whitelist and explicit fundamental/unknown classes");
 
@@ -119,7 +183,8 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   sol.disabledCapabilityIds = [vaultSkillCapabilityId(custom.id)];
   await assert.rejects(loader.renderSelectedSkillSetPrompt(["New custom"]), /agent_capability_agent_disabled/);
   await assert.rejects(createControlledVaultResourceLoader({ vaultRoot: root, skillPaths: [customPath], assertSkillAllowed: async value => requireAgentCapability(checkAgentSkillPath(context(), value)) }), /agent_capability_agent_disabled/);
-  sol.disabledCapabilityIds = ["journal"];
+  // A built-in module Skill can still be switched off by its own Skill id.
+  sol.disabledCapabilityIds = ["skill:daily-journal"];
   await assert.rejects(skillRuntime.resolveById("daily-journal", id => checkAgentSkill(context(), id).allowed), /agent_capability_skill_denied/);
   const selected = await skillRuntime.selectForTask({ text: "请把今天发生的事情整理成日记并保存到当天笔记", isSkillAllowed: id => checkAgentSkill(context(), id).allowed });
   assert.ok(!selected?.skills.some(skill => skill.id === "daily-journal"));
@@ -162,38 +227,39 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   await factory({ on: (name: string, handler: (...args: any[]) => any) => events.set(name, handler) } as never);
   const tools = createPiVaultToolDefinitions({ domainService: domain, security, writeExecution: createPiVaultProductionWriteExecutionPort({ receipts, domainService: domain }), assertToolAllowed: allow });
   const create = tools.find(tool => tool.name === "note_create")!;
-  sol.disabledCapabilityIds = ["journal", "finance"];
-  const event = { toolName: "note_create", toolCallId: "hidden-diary", input: { relativePath: "journal/hidden.md", content: "not allowed" } };
+  // 2026-11-25: per-Agent module opt-outs are gone for non-experts; the module switch is the live revocation here.
+  settings.lifestyle.finance.enabled = false;
+  const event = { toolName: "note_create", toolCallId: "hidden-finance", input: { relativePath: "custom-finance/hidden.md", content: "not allowed" } };
   assert.ok((await events.get("tool_call")!(event, {}))?.block, "hidden dispatch is denied");
-  await assert.rejects(create.execute("direct-finance", { relativePath: "custom-finance/direct.md", content: "not allowed" }, undefined, undefined), /agent_capability_agent_disabled/);
-  sol.disabledCapabilityIds = [];
+  await assert.rejects(create.execute("direct-finance", { relativePath: "custom-finance/direct.md", content: "not allowed" }, undefined, undefined), /agent_capability_module_disabled/);
+  settings.lifestyle.finance.enabled = true;
   const approvedArgs = { relativePath: "wiki/approved.md", content: "Approved knowledge\n" };
   assert.equal(await events.get("tool_call")!({ toolName: "note_create", toolCallId: "approved", input: approvedArgs }, {}), undefined);
   await create.execute("approved", approvedArgs, undefined, undefined);
   assert.equal(await readFile(path.join(root, approvedArgs.relativePath), "utf8"), approvedArgs.content);
   assert.equal(confirmations, 1);
-  const revokedArgs = { relativePath: "journal/revoked.md", content: "Must not be created" };
+  const revokedArgs = { relativePath: "custom-finance/revoked.md", content: "Must not be created" };
   assert.equal(await events.get("tool_call")!({ toolName: "note_create", toolCallId: "revoked", input: revokedArgs }, {}), undefined);
-  sol.disabledCapabilityIds = ["journal"];
-  await assert.rejects(create.execute("revoked", revokedArgs, undefined, undefined), /agent_capability_agent_disabled/);
+  settings.lifestyle.finance.enabled = false;
+  await assert.rejects(create.execute("revoked", revokedArgs, undefined, undefined), /agent_capability_module_disabled/);
   await assert.rejects(readFile(path.join(root, revokedArgs.relativePath)), /ENOENT/);
-  sol.disabledCapabilityIds = [];
+  settings.lifestyle.finance.enabled = true;
   access = { ...access, permission: "read-only" };
   await assert.rejects(create.execute("read-only", revokedArgs, undefined, undefined), /agent_capability_read_only/);
   access = { ...access, permission: "workspace-write" };
   let bypasses = 0;
   const wrapped = createControlledPiToolRegistration([{ name: "knowledge_maintain", execute: async () => { bypasses++; return { content: [], details: {} }; } } as unknown as ToolDefinition], allow).customTools![0];
-  sol.disabledCapabilityIds = ["knowledge"];
-  await assert.rejects(wrapped.execute("direct-knowledge", {}, undefined, undefined), /agent_capability_agent_disabled/);
+  access = { ...access, permission: "read-only" };
+  await assert.rejects(wrapped.execute("direct-knowledge", {}, undefined, undefined), /agent_capability_read_only/);
   assert.equal(bypasses, 0);
-  sol.disabledCapabilityIds = [];
+  access = { ...access, permission: "workspace-write" };
   console.log("PASS actual Vault dispatch/direct execution, approved write/receipt path and revocation after confirmation");
 
   for (const scenario of [
-    { id: "update-capability", source: "journal/late-update.md", revoke: () => { sol.disabledCapabilityIds = ["journal"]; } },
+    { id: "update-capability", source: "journal/late-update.md", revoke: () => { access = { ...access, permission: "read-only" }; } },
     { id: "update-pro", source: "custom-finance/late-update.md", revoke: () => { pro = false; } },
-    { id: "move-target", source: "wiki/late-move-source.md", destination: "custom-finance/late-move-target.md", revoke: () => { sol.disabledCapabilityIds = ["finance"]; } },
-    { id: "move-source", source: "custom-finance/late-move-source.md", destination: "wiki/late-move-target.md", revoke: () => { sol.disabledCapabilityIds = ["finance"]; } }
+    { id: "move-target", source: "wiki/late-move-source.md", destination: "custom-finance/late-move-target.md", revoke: () => { settings.lifestyle.finance.enabled = false; } },
+    { id: "move-source", source: "custom-finance/late-move-source.md", destination: "wiki/late-move-target.md", revoke: () => { settings.lifestyle.finance.enabled = false; } }
   ]) {
     sol.disabledCapabilityIds = []; pro = true;
     const before = `Original ${scenario.id}\n`;
@@ -222,7 +288,7 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
       if (scenario.destination) await assert.rejects(readFile(path.join(root, scenario.destination)), /ENOENT/);
       const operation = (await receipts.listUiViews({ conversationId: identity.conversationId })).find(row => row.operation?.toolCallId === scenario.id || row.receipt?.toolCallId === scenario.id);
       assert.equal(operation?.receipt?.status, "failed", "denied side effect remains a durable failed receipt");
-    } finally { release.resolve(); adapter.readFile = originalRead; sol.disabledCapabilityIds = []; pro = true; }
+    } finally { release.resolve(); adapter.readFile = originalRead; sol.disabledCapabilityIds = []; pro = true; settings.lifestyle.finance.enabled = true; access = { ...access, permission: "workspace-write" }; }
   }
   console.log("PASS real Domain snapshot gates: late Agent/PRO revocation denies update and both move endpoints before side effects");
 
@@ -236,12 +302,12 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: "cli-diary-only", input: ownDiary } as never), undefined);
   await cliTools.find(tool => tool.name === "obsidian_cli")!.execute("cli-diary-only", ownDiary, undefined, undefined);
   agentId = "sol";
-  sol.disabledCapabilityIds = ["journal", "finance"];
+  settings.lifestyle.finance.enabled = false;
   const readByName = { command: "read", file: "existing" };
   assert.equal(await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: "cli-resolved", input: readByName } as never), undefined, "reading a diary by name is open; only writes need the module");
   assert.ok((await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: "cli-finance", input: { command: "history:restore", path: "custom-finance/bill.md", version: 1 } } as never))?.block);
   assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search", query: "private" }).allowed, true);
-  sol.disabledCapabilityIds = [];
+  settings.lifestyle.finance.enabled = true;
   const cliRead = { command: "read", path: "wiki/source.md" };
   assert.equal(await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: "cli-revoke", input: cliRead } as never), undefined);
   sol.disabledCapabilityIds = ["knowledge"];
@@ -263,9 +329,9 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   settings.pdfReading.enabled = true; pro = true;
   const web = new PiWebSearchSecurity(() => settings.tavily, async () => await allow("web_search", {}));
   assert.equal(await web.handleToolCall({ toolName: "web_search", toolCallId: "web", input: { query: "public" } } as never), undefined);
-  sol.disabledCapabilityIds = ["web-search"];
-  await assert.rejects(web.execute("web", { query: "public" }, undefined, async () => { throw new Error("must not run network"); }), /agent_capability_agent_disabled/);
-  sol.disabledCapabilityIds = [];
+  settings.tavily = { ...settings.tavily, enabled: false };
+  await assert.rejects(web.execute("web", { query: "public" }, undefined, async () => { throw new Error("must not run network"); }), /agent_capability_module_disabled/);
+  settings.tavily = { ...settings.tavily, enabled: true };
   console.log("PASS actual CLI resolved targets, finance/PDF module and PRO gates, and web/PDF next-action revocation");
 
   const mcpResource: EchoInkResource = { id: "manual:mcp-server:external-fixture", name: "External fixture", kind: "mcp-server", source: "manual", enabled: true, bridgeMode: "structured-tools", description: "text is not authority" };
@@ -292,7 +358,8 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   sol.disabledCapabilityIds = [];
   settings.resources.mcpConnections[mcpResource.id] = { transport: "stdio", command: "synthetic-not-launched", trusted: true, tools: [cached, pathTool], toolPolicies: { write_item: { enabled: true, trusted: true }, write_note: { enabled: true, trusted: true } } };
   assert.equal(isPiMcpExternalOnly(context(), descriptor), false);
-  sol.disabledCapabilityIds = ["knowledge"];
+  // 2026-11-25: pathless local MCP scope checks now only narrow experts, who keep per-module grants.
+  agentId = expert.id; expert.capabilityIds = [mcpToolCapabilityId(mcpResource.id, "write_item"), mcpToolCapabilityId(mcpResource.id, "write_note")];
   assert.ok((await mcpSecurity.handleToolCall({ toolName: descriptor.name, toolCallId: "local-no-scope", input: { title: "finance record" } } as never, undefined))?.block);
   assert.ok((await mcpSecurity.handleToolCall({ toolName: descriptor.name, toolCallId: "local-forged-scope", input: { title: "finance record", path: "wiki/dummy.md" } } as never, undefined))?.block, "an undeclared argument cannot manufacture an authorized scope");
   sol.disabledCapabilityIds = [];
@@ -301,7 +368,6 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(await mcpSecurity.handleToolCall({ toolName: localDescriptor.name, toolCallId: "local-permitted", input: { path: "wiki/mcp.md", content: "fixture" } } as never, undefined), undefined);
   await localTool.execute("local-permitted", { path: "wiki/mcp.md", content: "fixture" }, undefined, undefined);
   assert.equal(externalCalls, 2);
-  sol.disabledCapabilityIds = ["finance"];
   assert.ok((await mcpSecurity.handleToolCall({ toolName: localDescriptor.name, toolCallId: "local-finance", input: { path: "finance/new.md", content: "denied" } } as never, undefined))?.block);
   assert.equal(checkAgentTool(context(), descriptor.name, { path: "finance/new.md" }, undefined, { resourceId: mcpResource.id, toolName: descriptor.toolName, readOnly: false }).allowed, false);
   assert.equal(checkAgentTool(context(), descriptor.name, { path: "wiki/new.md", command: "arbitrary code" }, undefined, { resourceId: mcpResource.id, toolName: descriptor.toolName, readOnly: false }).reason, "scope_required");
@@ -339,9 +405,11 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   sol.disabledCapabilityIds = [];
   const linkingLoader = await createControlledVaultResourceLoader({ vaultRoot: root, inlineExtension: knowledgeLinkingInlineExtension(), assertBeforeAgentStart: async () => requireAgentCapability(checkAgentCapability(context(), "knowledge")) });
   const linkingStart = (linkingLoader.getExtensions().extensions[0].handlers as Map<string, Array<(...args: any[]) => any>>).get("before_agent_start")![0];
-  sol.disabledCapabilityIds = ["knowledge"];
-  await assert.rejects(linkingStart({ systemPrompt: "product" }), /agent_capability_agent_disabled/);
-  sol.disabledCapabilityIds = [];
+  // 2026-11-25: Knowledge can no longer be removed from a non-expert Agent; switching the module off still revokes it live.
+  const linkingBindings = settings.knowledgeBase.folderBindings;
+  settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  await assert.rejects(linkingStart({ systemPrompt: "product" }), /agent_capability_module_disabled/);
+  settings.knowledgeBase.folderBindings = linkingBindings;
   assert.equal(checkAgentTool({ ...context(), access: { ...access, permission: "read-only" } }, "knowledge_linking_propose", {}).allowed, true, "proposal classification does not itself write notes");
   console.log("PASS hidden MCP readback and internal linking resources recheck the current capability");
 
@@ -377,20 +445,26 @@ export function runDesktopDirectoryCapabilityTests(): void {
   const context: AgentCapabilityContext = { settings, agentId: "journal-only", vaultRoot: "/synthetic/desktop-policy", resources: [], access: { permission: "workspace-write", mode: "agent", memoryMode: "normal" } };
   for (const relativePath of ["日记/旧工作/day.md", "日记/旧存档/day.md"]) {
     assert(checkAgentTool(context, "note_update", { relativePath }).allowed, "retired bindings cannot shadow the active journal scope, enabled or disabled");
-    assert.equal(checkAgentTool({ ...context, agentId: "knowledge-only" }, "note_update", { relativePath }).reason, "agent_disabled", "retired bindings cannot grant Knowledge authority over a journal");
+    // 2026-11-25: legacy module opt-outs have no editor anymore; every non-expert Agent writes every module folder.
+    assert(checkAgentTool({ ...context, agentId: "knowledge-only" }, "note_update", { relativePath }).allowed, "a legacy journal opt-out no longer limits a non-expert Agent");
   }
   assert(checkAgentTool({ ...context, agentId: "knowledge-only" }, "note_update", { relativePath: "项目/研究/a.md" }).allowed);
   assert(checkAgentTool(context, "note_update", { relativePath: "项目/研究/a.md" }).allowed, "a person chatting with an Agent may have it write ordinary folders");
   assert(checkAgentTool(context, "note_read", { relativePath: "02-Areas/个人财务/账本.md" }).allowed, "every hired Agent can read the vault");
   assert(checkAgentTool({ ...context, agentId: "knowledge-only" }, "note_read", { relativePath: "日记/day.md" }).allowed, "reading another module's folder needs no grant");
   const worker = { ...context, companyRole: "worker" as const };
-  assert.equal(checkAgentTool(worker, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).reason, "folder_grant_required", "a dispatched worker writes ordinary folders only when the assistant opened them");
-  assert(checkAgentTool({ ...worker, folderGrants: ["02-Areas/个人财务"] }, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).allowed, "an assistant grant opens that folder");
-  assert.equal(checkAgentTool({ ...worker, folderGrants: ["02-Areas/个人财务"] }, "note_update", { relativePath: "02-Areas/其他/a.md" }).reason, "folder_grant_required", "a grant covers only its folder");
-  assert.equal(checkAgentTool({ ...worker, agentId: "knowledge-only", folderGrants: ["日记"] }, "note_update", { relativePath: "日记/day.md" }).reason, "agent_disabled", "a folder grant cannot override a basic capability explicitly turned off");
+  // 2026-11-25: dispatched non-expert workers write any folder; the assistant's folder grant now only matters for experts.
+  assert(checkAgentTool(worker, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).allowed, "a dispatched worker writes ordinary folders without an assistant grant");
+  assert(checkAgentTool({ ...worker, agentId: "knowledge-only" }, "note_update", { relativePath: "日记/day.md" }).allowed, "a worker writes another module's folder");
   assert(checkAgentTool(worker, "note_update", { relativePath: "日记/day.md" }).allowed, "a worker always writes its own module folder");
-  assert.equal(checkAgentTool({ ...worker, folderGrants: ["02-Areas"], access: { permission: "read-only", mode: "agent", memoryMode: "normal" } }, "note_update", { relativePath: "02-Areas/a.md" }).reason, "read_only", "a grant never lifts read-only");
-  console.log("PASS desktop module folders, open reads and assistant folder grants");
+  settings.agentRegistry.agents.push({ id: "expert-socrates", name: "苏格拉底", avatar: { kind: "default" }, position: "", styleId: "analysis", kind: "expert",
+    expert: { expertId: "socrates", hired: true, packageVersion: "1", summary: "", disclosureShown: false, events: [] }, capabilityIds: ["journal"] });
+  const expertWorker = { ...worker, agentId: "expert-socrates", proAccess: { checkCapability: () => true } as never };
+  assert.equal(checkAgentTool(expertWorker, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).reason, "folder_grant_required", "a dispatched expert still writes ordinary folders only when the assistant opened them");
+  assert(checkAgentTool({ ...expertWorker, folderGrants: ["02-Areas/个人财务"] }, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).allowed, "an assistant grant opens that folder to an expert");
+  assert.equal(checkAgentTool({ ...expertWorker, folderGrants: ["02-Areas/个人财务"] }, "note_update", { relativePath: "02-Areas/其他/a.md" }).reason, "folder_grant_required", "a grant covers only its folder");
+  assert.equal(checkAgentTool({ ...worker, access: { permission: "read-only", mode: "agent", memoryMode: "normal" } }, "note_update", { relativePath: "02-Areas/a.md" }).reason, "read_only", "read-only still blocks every write");
+  console.log("PASS desktop module folders, open reads, open worker writes and expert folder grants");
 }
 
 async function productionSkillSelectionTests(root: string): Promise<void> {
@@ -433,8 +507,9 @@ async function productionSkillSelectionTests(root: string): Promise<void> {
   const request = "请帮我做一次知识复盘。";
   const selected = await select(request);
   assert.ok(selected?.skills.some(skill => skill.id === "knowledge-review"), "a matching permitted Skill is selected through production wiring");
-  fixture.plugin.settings.agentRegistry.agents[0].disabledCapabilityIds = ["review"];
-  assert.equal(await select(request), null, "revoking the Agent capability denies the same Skill on the next selection");
+  // 2026-11-25: module capabilities can no longer be revoked per Agent; an explicit Skill opt-out still applies live.
+  fixture.plugin.settings.agentRegistry.agents[0].disabledCapabilityIds = ["skill:knowledge-review"];
+  assert.equal(await select(request), null, "revoking the Skill denies it on the next selection");
   assert.equal(scans, 3, "every selection refreshes current resources outside the Skill queue");
   console.log("PASS production Skill selection with real catalog/coordinator: ordinary read completes, matching Skill selects, revoked capability denies");
 }
@@ -469,10 +544,11 @@ async function unrestrictedAgentCompatibility(root: string): Promise<void> {
   agentId = "all-modules";
   assert.ok(operations().every(result => result.allowed), "compatibility depends on module grants, not a hardcoded Sol bypass");
   agentId = sol.id;
+  // 2026-11-25: module capabilities can no longer be removed from a non-expert Agent, so legacy opt-outs keep full access.
   for (const capability of AGENT_MODULE_CAPABILITIES) {
     sol.disabledCapabilityIds = [capability];
-    assert.deepEqual(operations().map(result => result.allowed ? "allowed" : result.reason), ["allowed", "allowed", "scope_required", "scope_required"],
-      `removing ${capability} keeps whole-vault reads open but restores pathless MCP scope checks`);
+    assert.deepEqual(operations().map(result => result.allowed ? "allowed" : result.reason), ["allowed", "allowed", "allowed", "allowed"],
+      `a legacy ${capability} opt-out no longer narrows a non-expert Agent`);
   }
   sol.disabledCapabilityIds = [];
   const identity = { vaultId: "scope-compatibility", conversationId: "compatibility", piSessionId: "session", productRunId: "run" };
@@ -517,7 +593,8 @@ async function unrestrictedAgentCompatibility(root: string): Promise<void> {
   agentId = "diary-restricted";
   assert.equal(checkAgentTool(context(), "vault_search", { query: "private" }).allowed, true, "a restricted Agent may still search the whole vault");
   assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search", query: "private" }).allowed, true);
-  assert.equal(checkAgentTool(context(), "add_todo", args, undefined, target("add_todo", false)).reason, "scope_required");
+  // 2026-11-25: every non-expert Agent has all module work, so a pathless MCP write is no longer narrowed to a scope.
+  assert.equal(checkAgentTool(context(), "add_todo", args, undefined, target("add_todo", false)).allowed, true);
   console.log("PASS unrestricted Agent compatibility: four legacy operations, module revocation, real MCP confirmation/denial and durable receipt");
 }
 
@@ -570,7 +647,9 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   ], results: [], writeConfirmed: true });
   const deniedStore = new KnowledgeLinkingStateStore(path.join(root, "denied-state", "state.json"));
   await deniedStore.save(task("denied-task"));
-  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.disabledCapabilityIds = ["knowledge"];
+  // 2026-11-25: a non-expert origin Agent always has Knowledge; removing the Agent is the revocation exercised here.
+  const originAgent = f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!;
+  f.plugin.settings.agentRegistry.agents = f.plugin.settings.agentRegistry.agents.filter(agent => agent !== originAgent);
   const denied = new KnowledgeLinkingService(createProductionKnowledgeLinkingHost(plugin as never), deniedStore);
   await denied.ready; await denied.resume(); await denied.waitForIdle();
   assert.equal(await readFile(path.join(root, "wiki/a.md"), "utf8"), "A before\n");
@@ -579,9 +658,9 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   const reloadedDenied = new KnowledgeLinkingService(createProductionKnowledgeLinkingHost(plugin as never), deniedStore);
   await reloadedDenied.ready;
   assert.equal(reloadedDenied.snapshot()?.originConversationId, "origin-task");
-  await assert.rejects(createProductionKnowledgeLinkingHost(plugin as never).write("wiki/a.md", "A before\n", "forbidden", reloadedDenied.snapshot()!), /agent_capability_agent_disabled/);
+  await assert.rejects(createProductionKnowledgeLinkingHost(plugin as never).write("wiki/a.md", "A before\n", "forbidden", reloadedDenied.snapshot()!), /no module owner|agent_capability_agent_missing/);
   await reloadedDenied.dispose();
-  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.disabledCapabilityIds = [];
+  f.plugin.settings.agentRegistry.agents.push(originAgent);
   await assert.rejects(production.write("wiki/a.md", "A before\n", "forbidden", { authorizationSource: "unknown" }), /origin_unknown/);
   const unknownStore = new KnowledgeLinkingStateStore(path.join(root, "unknown-state", "state.json"));
   const oldTask = task("old-unknown-task"); delete oldTask.originConversationId; delete oldTask.authorizationSource;

@@ -20,6 +20,7 @@ import type { CloudSyncController } from "../../sync/cloud/controller";
 
 export interface IPhoneWorkbenchHost {
   app: App;
+  workbenchNotices?: import("../../membership/workbench-notices").WorkbenchNotices;
   releaseUpdate?: import("../../settings/release-update").ReleaseUpdateController;
   store: MobileStore;
   reloadTaskFile?: () => Promise<void>;

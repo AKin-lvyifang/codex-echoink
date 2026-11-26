@@ -162,3 +162,18 @@ body:not(.is-mobile) .echoink-agent-editor-identity-group .echoink-agent-editor-
 }
 
 .echoink-agent-editor-footer > .echoink-agent-editor-actions { margin-inline-start: auto; }
+
+/* Agent 模型：模型下拉 + 思考强度分段控件（2026-11-25 改版） */
+.echoink-agent-editor-model-box { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--agent-editor-line); border-radius: 10px; }
+.echoink-agent-editor-model-effort { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.echoink-agent-editor-model-effort[hidden] { display: none; }
+.echoink-agent-editor-model-note { font-size: 12px; color: var(--agent-editor-muted); }
+.echoink-agent-editor-effort { position: relative; display: grid; grid-template-columns: repeat(var(--echoink-agent-effort-count, 2), minmax(0, 1fr)); min-height: 32px; padding: 2px; border-radius: 6px; background: var(--agent-editor-hover); }
+.echoink-agent-editor-effort > .echoink-origin-radio-group { position: absolute; inset: 0; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+.echoink-agent-editor-effort::before { content: ""; position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--echoink-agent-effort-count, 2)); transform: translateX(calc(100% * var(--echoink-agent-effort-index, 0))); border-radius: 5px; background: var(--agent-editor-bg); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); transition: transform 160ms ease; }
+.echoink-agent-editor-effort-option { position: relative; display: grid; place-items: center; min-width: 0; font-size: 12px; color: var(--agent-editor-muted); }
+.echoink-agent-editor-effort-option > span { position: relative; pointer-events: none; }
+.echoink-agent-editor-effort-option button[data-slot="radio-group-item"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.echoink-agent-editor-effort-option.is-selected { color: var(--agent-editor-text); font-weight: 600; }
+.echoink-agent-editor-effort-option button[data-slot="radio-group-item"]:focus-visible { opacity: 1; background: transparent; outline: 2px solid var(--agent-editor-accent); outline-offset: -2px; border-radius: 5px; }
+@media (prefers-reduced-motion: reduce) { .echoink-agent-editor-effort::before { transition: none; } }

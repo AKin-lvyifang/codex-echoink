@@ -4,11 +4,18 @@
 .echoink-finance-navigation .echoink-life-header-actions { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 100%; }
 .echoink-finance-navigation button.echoink-module-back { width: 30px; min-width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 8px; flex-shrink: 0; background: transparent; color: var(--text-muted); }
 .echoink-finance-navigation .echoink-module-back svg { width: 16px; height: 16px; }
-.echoink-finance-navigation button.echoink-module-handoff { min-height: 30px; height: auto; max-width: 100%; padding: 5px 12px; font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.55; border-radius: 8px; border: 1px solid transparent; white-space: normal; overflow-wrap: anywhere; background: var(--echoink-theme-accent, var(--interactive-accent)); color: var(--echoink-theme-on-accent, var(--text-on-accent)); }
-.echoink-finance-navigation button.echoink-amicro-button.echoink-module-handoff:not(:disabled):is(:hover,:active) { background: color-mix(in srgb, var(--echoink-theme-accent, var(--interactive-accent)) 90%, var(--text-normal)); }
+.echoink-finance-navigation button.echoink-module-handoff { min-height: 30px; height: auto; max-width: 100%; padding: 5px 12px; font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.55; border-radius: 8px; border: 1px solid var(--echoink-theme-line, var(--background-modifier-border)); white-space: normal; overflow-wrap: anywhere; background: transparent; color: var(--echoink-theme-text, var(--text-normal)); box-shadow: none; }
+.echoink-finance-navigation button.echoink-amicro-button.echoink-module-handoff:not(:disabled):is(:hover,:active) { background: var(--echoink-theme-hover, var(--background-modifier-hover)); }
 .echoink-finance-navigation button.echoink-amicro-button:is(.echoink-module-back,.echoink-module-handoff):not(:disabled):focus-visible,
 .echoink-finance-navigation button.echoink-amicro-button.echoink-module-back:not(:disabled):hover { background: var(--echoink-theme-hover, var(--background-modifier-hover)); color: var(--echoink-theme-text, var(--text-normal)); outline: none; box-shadow: none; border-color: transparent; }
 .echoink-finance-navigation button:is(.echoink-module-back,.echoink-module-handoff):disabled { opacity: .45; cursor: default; }
 @container life-workspace (max-width: 520px) {
   .echoink-finance-navigation .echoink-life-header-actions { flex-basis: 100%; }
 }
+
+/* 模块页标题栏（日记、待办、财务、知识库、英文日记、PDF 精读）：负责人动作在左，模块主操作在右。 */
+.echoink-module-header-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; margin-left: auto; }
+button.echoink-module-owner-action { display: inline-flex; align-items: center; gap: 6px; }
+.echoink-module-owner-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; height: 18px; border-radius: 50%; overflow: hidden; background: var(--background-modifier-hover); color: var(--text-muted); }
+.echoink-module-owner-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.echoink-module-owner-avatar svg { width: 12px; height: 12px; }

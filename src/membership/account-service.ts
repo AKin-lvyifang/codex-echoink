@@ -34,6 +34,7 @@ import { parseExpertCatalog, parseExpertDelivery, validExpertId,
   type ExpertCatalog, type ExpertDeliveryResponse, type ExpertPlatform } from "../experts/contracts";
 
 import { membershipErrorText, membershipFailureText } from "./messages";
+import type { AccountNotices, GiftReceipt } from "./types";
 import { PRO_ACCESS_COPY } from "../core/error-copy/codes/account";
 import { MembershipNetworkError } from "./network-error";
 import { parseExpertAvatarPresets, parseExpertSubmissionHistory, parseExpertSubmissionReceipt, type ExpertSubmissionPayload } from "../experts/submission-contract";
@@ -198,7 +199,37 @@ export class AccountService implements CapabilityAccess {
   async getPoints(): Promise<PointsSummary> {
     const operation = this.operation();
     if (!operation.token) throw new MembershipApiError("AUTH_REQUIRED");
-    return await this.call("/api/points", "GET", undefined, operation);
+    const result = await this.call("/api/points", "GET", undefined, operation);
+    this.assertCurrent(operation);
+    return result;
+  }
+  noticeAccountId(): string | null {
+    return this.checkInSession() === null ? null : this.state.account?.id ?? null;
+  }
+  async getNotices(version: string): Promise<AccountNotices> {
+    const result = await this.noticeRequest("/api/notices", "GET", version) as Partial<AccountNotices> | null;
+    if (!result || !Array.isArray(result.notices))
+      throw new MembershipApiError("REQUEST_FAILED");
+    return { notices: result.notices.filter(item =>
+      item && item.kind === "gift" && typeof item.id === "string" && item.id.length > 0 &&
+      typeof item.title === "string" && typeof item.desc === "string" &&
+      Number.isFinite(item.points) && item.points > 0 && typeof item.grantsOnClaim === "boolean") };
+  }
+  async claimGift(id: string, version: string): Promise<GiftReceipt> {
+    const result = await this.noticeRequest(`/api/notices/${encodeURIComponent(id)}/claim`, "POST", version) as Partial<GiftReceipt> | null;
+    if (!result || typeof result.granted !== "boolean" || typeof result.points !== "number" ||
+      !Number.isFinite(result.points) || result.points <= 0 || typeof result.balance !== "string" ||
+      typeof result.expiresAt !== "number" || !Number.isSafeInteger(result.expiresAt) || result.expiresAt <= 0)
+      throw new MembershipApiError("REQUEST_FAILED");
+    return { granted: result.granted, points: result.points, balance: result.balance, expiresAt: result.expiresAt };
+  }
+  private async noticeRequest(path: string, method: "GET" | "POST", version: string): Promise<unknown> {
+    const operation = this.operation();
+    if (!operation.token || !operation.accountId) throw new MembershipApiError("AUTH_REQUIRED");
+    if (!this.apiUrl) throw new MembershipApiError("SERVICE_UNAVAILABLE");
+    const result = await this.transport(path, method, undefined, operation.token, { "X-EchoInk-Plugin-Version": version });
+    this.assertCurrent(operation);
+    return result;
   }
   async getXiaoechoModels(): Promise<unknown> {
     const operation = this.operation();

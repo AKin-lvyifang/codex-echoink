@@ -121,7 +121,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openRunReport(taskId: string) { calls.push(["report", taskId]); },
     async openTaskDetail(id: string) { calls.push(["detail", id]); },
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
-    async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
+    async openAgentTaskList(...args: unknown[]) { if (dispatchError) throw dispatchError; calls.push(["list", ...args]); await dispatchGate; return true; },
     async openPaperGuideAfterOnboarding(manual: boolean) { calls.push(["setup-guide", manual]); },
     async openAgentPersonaEditor(id: string) { calls.push(["persona", id]); return true; },
     async openModuleOwnerSettings(id: string) { calls.push(["owner-settings", id]); },
@@ -184,21 +184,22 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="loading"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0, "unread groups never claim zero");
     await tick();
-    const reminder = content.querySelector<HTMLElement>('[data-wb="setup-todos"]')!;
-    const releaseReminders = content.querySelector<HTMLElement>('[data-wb="release-reminders"]')!;
-    assert.equal(releaseReminders.nextElementSibling, reminder);
-    assert.deepEqual(Array.from(releaseReminders.querySelectorAll("[data-release-reminder]"), row => row.getAttribute("data-release-reminder")), ["update", "notes"]);
-    const todoTexts = () => Array.from(reminder.querySelectorAll<HTMLElement>(".wb-setup-todo .wb-grow"), node => node.textContent);
-    const guide = () => reminder.querySelector<HTMLElement>(".wb-guide");
+    const reminder = content.querySelector<HTMLElement>('[data-wb="reminders"]')!;
+    assert.equal(reminder.previousElementSibling, content.querySelector('[data-wb="status"]'), "reminders follow the notices that block work");
+    const reminderRows = () => Array.from(reminder.querySelectorAll<HTMLElement>(".wb-setup-todo:not(.is-more)"));
+    const todoTexts = () => reminderRows().map(row => row.querySelector(".wb-setup-todo-text")?.textContent);
+    const reminderKinds = () => reminderRows().map(row => row.dataset.setupTodo ?? row.dataset.releaseReminder ?? row.dataset.guideStep);
+    const guide = () => button("guide-dismiss-all") ?? null;
     assert.equal(content.querySelector(".wb-deck"), null, "the starter carousel is gone");
-    assert.equal(guide()?.querySelector("h2")?.textContent, "新手引导");
-    assert.equal(guide()?.querySelector(".wb-count")?.textContent, "9");
-    assert.deepEqual(todoTexts().slice(0, 2), ["还没设置知识库", "还没连接模型"], "setup to-dos lead the getting-started group");
-    assert.match(todoTexts()[2] ?? "", /^日记、待办.*复盘都交给了通才$/u, "new installs are reminded to write the generalist persona");
-    assert.equal(reminder.querySelectorAll(".wb-setup-todo:not(.is-more)").length, 5, "five rows show by default, the rest fold into one more row");
-    assert.equal(button("setup-todo-more").textContent?.trim(), "还有 4 项");
-    await click("setup-todo-more");
-    assert.equal(reminder.querySelector('[data-guide-step="knowledge"]'), null, "the knowledge step yields to the identical setup to-do");
+    assert.equal(reminder.querySelector("h2")?.textContent, "提醒");
+    assert.equal(reminder.querySelector(".wb-count")?.textContent, "10");
+    assert.deepEqual(todoTexts(), ["未设置知识库", "未连接模型服务"], "two rows show; setup problems lead");
+    assert.ok(!(reminder.textContent ?? "").includes("交给了") && !(reminder.textContent ?? "").includes("没有负责人"), "ownership reminders are gone");
+    assert.equal(button("reminders-more").textContent?.trim(), "还有 8 条");
+    assert.equal(button("reminders-more").getAttribute("aria-expanded"), "false");
+    await click("reminders-more");
+    assert.deepEqual(reminderKinds(), ["knowledge", "model", "update", "notes", "avatar", "appearance", "journal", "reading", "english", "pdf"], "release news follows setup; onboarding comes last");
+    assert.equal(button("reminders-more").textContent?.trim(), "收起");
     assert.equal(button("guide:english").textContent?.trim(), "开始写", "PRO users get the step itself");
     await click("guide:avatar"); assert.deepEqual(calls.at(-1), ["setup", "agent"]);
     assert.equal(reminder.querySelector('[data-guide-step="avatar"]'), null, "a clicked step counts as done");
@@ -211,10 +212,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.deepEqual(calls.at(-1), ["list", "generalist", "帮我开始写今天的日记，先问我三个问题。"], "the journal step goes to the journal owner");
     await click("guide-dismiss:reading");
     assert.equal(reminder.querySelector('[data-guide-step="reading"]'), null, "a dismissed step leaves");
-    assert.equal(reminder.querySelector('[data-wb-focus="setup-todo:knowledge"]')?.textContent?.trim(), "去初始化");
+    assert.equal(reminder.querySelector('[data-wb-focus="setup-todo:knowledge"]')?.textContent?.trim(), "设置");
     await click("setup-todo:knowledge"); assert.deepEqual(calls.at(-1), ["setup-guide", true]);
-    await click("setup-todo:persona"); assert.deepEqual(calls.at(-1), ["persona", "generalist"]);
-    await click("setup-todo:persona:aside"); assert.deepEqual(calls.at(-1), ["owner-settings", "journal"]);
+    await click("setup-todo:model"); assert.deepEqual(calls.at(-1), ["setup", "models"]);
     host.settings.sessions.push({ id: "empty-onboarding", messages: [] }); projectionText.set("empty-onboarding", "");
     tasks = [entry("empty-onboarding", "interrupted")]; await view.refresh();
     assert.ok(guide(), "empty shells and task metadata cannot dismiss onboarding");
@@ -227,22 +227,23 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(guide(), null, "deleting the old conversation cannot restore onboarding");
     host.settings.workbenchOnboardingDismissed = false; await view.refresh();
     assert.ok(guide()); await click("guide-dismiss-all");
-    assert.equal(host.settings.workbenchOnboardingDismissed, true); assert.equal(guide(), null, "dismissing all leaves the setup to-dos without a group");
-    assert.equal(releaseReminders.querySelectorAll("[data-release-reminder]").length, 2, "dismissing onboarding preserves both release reminders");
+    assert.equal(host.settings.workbenchOnboardingDismissed, true); assert.equal(guide(), null, "closing getting started keeps the other reminders");
+    assert.equal(reminder.querySelectorAll("[data-release-reminder]").length, 2, "dismissing onboarding preserves both release reminders");
+    assert.equal(button("release:update").textContent?.trim(), "更新");
     await click("release:notes:dismiss");
-    assert.equal(releaseReminders.querySelector('[data-release-reminder="notes"]'), null);
-    assert.equal(releaseReminders.hidden, false);
+    assert.equal(reminder.querySelector('[data-release-reminder="notes"]'), null);
+    assert.equal(reminder.hidden, false);
     await click("release:update:dismiss");
-    assert.equal(releaseReminders.hidden, true, "the release container leaves no empty space");
+    assert.equal(reminder.querySelector("[data-release-reminder]"), null);
     assert.equal(reminder.hidden, false, "knowledge setup reminder is independent of conversation onboarding");
     await click("setup-todo-dismiss:knowledge");
     assert.notEqual(host.settings.knowledgeBase.initialized, true);
     assert.equal(host.settings.setup.setupTodoDismissed?.knowledge, "knowledge");
     assert.equal((savedSettings.at(-1) as typeof host.settings).setup.setupTodoDismissed?.knowledge, "knowledge");
     await view.refresh();
-    assert.equal(todoTexts()[0], "还没连接模型", "dismissing one item keeps the others");
-    await click("setup-todo-dismiss:model"); await click("setup-todo-dismiss:persona");
-    assert.equal(reminder.hidden, true); await view.refresh(); assert.equal(reminder.hidden, true);
+    assert.deepEqual(todoTexts(), ["未连接模型服务"], "dismissing one item keeps the others");
+    await click("setup-todo-dismiss:model");
+    assert.equal(reminder.hidden, true, "an empty reminders list leaves no space"); await view.refresh(); assert.equal(reminder.hidden, true);
     for (const [phase, group] of [["scanning", "running"], ["judging", "running"], ["writing", "running"], ["queued", "running"], ["awaiting-confirmation", "waiting"], ["partial", "interrupted"], ["failed", "interrupted"], ["interrupted", "interrupted"], ["completed", null], ["cancelled", null]] as const) {
       const linking: KnowledgeLinkingTask = { schemaVersion: 1, id: "system-linking", mode: "manual", phase, judgment: "aliases", bindingSignature: "test", createdAt: 1, updatedAt: 2, processed: 9, total: 20, proposals: [], patches: [], results: [] };
       activitySnapshot = { primary: null, other: null, maintenance: [], linking };
@@ -269,9 +270,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelector(".wb-memory-notice details"), null, "an English internal reason gets no Details disclosure");
     assert.ok(!content.querySelector(".wb-memory-notice")?.textContent?.includes(memoryNotice.reason), "the raw reason never reaches the banner");
     const memoryHost = content.querySelector<HTMLElement>('[data-wb="memory-notice"]')!;
-    assert.equal(memoryHost.nextElementSibling, releaseReminders, "memory explanation precedes release reminders and getting started");
+    assert.equal(memoryHost.nextElementSibling, content.querySelector('[data-wb="status"]'), "the memory notice leads the overview, ahead of reminders");
     const useMemory = memoryHost.querySelector<HTMLButtonElement>(".is-primary")!;
-    assert.equal(useMemory.textContent, "沿用这份记忆"); useMemory.click(); await tick();
+    assert.equal(useMemory.textContent, "沿用现有记忆"); useMemory.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
     memoryNotice = { kind: "mismatch", reason: "Personal Memory manifest belongs to another Vault" }; await view.refresh();
     const restart = memoryHost.querySelector<HTMLButtonElement>(".is-secondary")!;
@@ -285,7 +286,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.deepEqual(calls.at(-1), ["resolve-memory", "reset"]); assert.equal(memoryHost.children.length, 0);
     memoryNotice = { kind: "mismatch", reason: "Personal Memory manifest belongs to another Vault" }; host.settings.settingsLanguage = "en"; await view.refresh();
     assert.match(memoryHost.textContent ?? "", /does not belong to this vault/u);
-    assert.equal(memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.textContent, "Use this memory");
+    assert.equal(memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.textContent, "Use existing memory");
     memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
     memoryError = "fixture unsupported schema"; await view.refresh();
@@ -450,7 +451,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
 
     const completed = Object.freeze({ ...entry("done", "completed"), unreadAnswerAt: Date.now() });
     const runningTitle = `完整工作台标题 ${"长".repeat(110)}`, runningStage = "😀".repeat(110);
-    tasks = [stopped, waiting, { ...entry("run", "running"), title: runningTitle, taskStage: runningStage }, completed];
+    // The overview reads the clock: an unfinished task from this week shows, an older one folds.
+    const recentStop = { ...stopped, updatedAt: Date.now(), taskInterruptedAt: Date.now() };
+    tasks = [recentStop, waiting, { ...entry("run", "running"), title: runningTitle, taskStage: runningStage }, completed];
     host.settings.sessions.push({ id: completed.conversationId, messages: [] });
     snapshot = { ...snapshot, signals: Array.from({ length: 7 }, (_, index) => signal(index)) };
     await view.refresh();
@@ -476,7 +479,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(projectionReads.get("done"), 2, "a changed Catalog revision reloads the result");
     assert.match(content.querySelector('[data-task="done"] .wb-secondary')?.textContent ?? "", /更新后的真实结果/);
     assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>("[data-wb-group]")).map(node => node.dataset.wbGroup), ["waiting", "running", "interrupted", "signals", "completed"]);
-    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["等你回应", "正在进行", "没做完", "可以交给 Agent", "今天完成"]);
+    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["待确认", "正在进行", "未完成", "可以交给 Agent", "今日已完成"]);
+    assert.match(content.querySelector('[data-task="wait"] .wb-task-status')?.textContent ?? "", /待确认/u);
+    assert.equal(button("signal-signal-0").textContent?.trim(), "梳理优先级", "the button names the action, not an Agent");
     assert.match(content.textContent ?? "", /被你停止/);
     assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
     const retained = button("signal-signal-0");
@@ -526,14 +531,17 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.deepEqual(Array.from(content.querySelectorAll('[data-task="wait"] .wb-options button')).map(node => node.textContent), ["选项 A", "其他"]);
     content.querySelector<HTMLElement>('[data-task="wait"] .wb-question > div')!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["detail", "wait"], "the question card still opens the complete question and supplement");
-    await click("signal-signal-0"); assert.equal(calls.at(-1)?.[0], "dispatch"); assert.equal(snapshot.signals.length, 7, "dispatch does not invent completion");
+    await click("signal-signal-0");
+    assert.deepEqual(calls.at(-1)?.slice(0, 3), ["list", GENERAL_ASSISTANT_ID, "处理事项 0"], "the general assistant gets a new conversation with the request prefilled");
+    assert.equal(JSON.parse(calls.at(-1)![3] as string).businessKey, "signal-0", "the frozen source travels with the draft");
+    assert.equal(snapshot.signals.length, 7, "prefilling does not invent completion");
     let releaseDispatch!: () => void;
     dispatchGate = new Promise(resolve => { releaseDispatch = resolve; });
-    const dispatches = calls.filter(call => call[0] === "dispatch").length;
+    const dispatches = calls.filter(call => call[0] === "list").length;
     button("signal-signal-0").click(); button("signal-signal-0").click(); await tick();
     assert.equal(button("signal-signal-0").disabled, true);
-    assert.match(button("signal-signal-0").textContent!, /正在新建/);
-    assert.equal(calls.filter(call => call[0] === "dispatch").length, dispatches + 1, "double click dispatches once while pending");
+    assert.match(button("signal-signal-0").textContent!, /正在打开/);
+    assert.equal(calls.filter(call => call[0] === "list").length, dispatches + 1, "double click opens once while pending");
     releaseDispatch(); await tick(); dispatchGate = undefined;
     dispatchError = new Error("真实派发异常");
     await click("signal-signal-0");
@@ -562,6 +570,46 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok([...subscribers].every(listener => listener.isTaskVisible("done") === false), "overview never marks all tasks read");
     assert.equal(content.querySelectorAll("button button").length, 0);
 
+    const tasksBeforeFold = tasks;
+    tasks = [recentStop, { ...stopped, conversationId: "old-stop" }]; await view.refresh();
+    const unfinished = () => Array.from(content.querySelectorAll<HTMLElement>('[data-wb-group="interrupted"] [data-task]')).map(node => node.dataset.task);
+    assert.deepEqual(unfinished(), ["stop"], "only the last seven days of unfinished work show");
+    assert.equal(content.querySelector('[data-wb-group="interrupted"] .wb-count')?.textContent, "2", "the count still covers every unfinished task");
+    assert.equal(button("unfinished-older").textContent?.trim(), "更早 1 项");
+    await click("unfinished-older"); assert.deepEqual(unfinished(), ["stop", "old-stop"]);
+    assert.equal(button("unfinished-older").textContent?.trim(), "收起"); assert.equal(button("unfinished-older").getAttribute("aria-expanded"), "true");
+    await click("unfinished-older"); assert.deepEqual(unfinished(), ["stop"]);
+    const remote = Array.from({ length: 5 }, (_, index) => ({ id: `remote-${index}`, deviceId: "phone", deviceName: "iPhone", title: `远端对话 ${index}`, updatedAt: Date.now() - index, continuedOn: [], preview: "预览" }));
+    Object.assign(host, { syncOverview: { snapshot: () => ({ projects: [], docs: {}, conversations: remote }), subscribe: () => () => {} } });
+    await view.refresh();
+    const remoteGroup = () => content.querySelector<HTMLElement>('[data-wb-group="remote-conversations"]')!;
+    assert.equal(remoteGroup().querySelector("h2")?.textContent, "其他设备会话");
+    assert.equal(remoteGroup().querySelectorAll("[data-remote-conversation]").length, 3, "three rows show");
+    assert.equal(button("remote-more").textContent?.trim(), "还有 2 条");
+    await click("remote-more"); assert.equal(remoteGroup().querySelectorAll("[data-remote-conversation]").length, 5);
+    assert.equal(content.querySelector("[data-wb-group]:last-child")?.getAttribute("data-wb-group"), "remote-conversations", "other devices close the overview");
+    Object.assign(host, { syncOverview: { snapshot: () => ({ projects: [], docs: {}, conversations: [] }), subscribe: () => () => {} } });
+    const diaryItem = { id: "diary-1", documentId: "journal", status: "review", reasons: [], revision: 1, createdAt: Date.now(), updatedAt: Date.now(), sourceFingerprint: "fixture",
+      candidate: { type: "todo", quote: "周五前寄回合同", text: "周五前寄回合同", confidence: "high", occurred: true, ownership: "self" } };
+    let diaryItems = [diaryItem];
+    const diaryConfirms: string[] = [];
+    Object.assign(host.settings, { diaryOrganizerEnabled: true });
+    Object.assign(host, { diaryOrganizer: { hasJournals: true, engine: { getState: () => ({ items: diaryItems, documents: [] }),
+      async confirm(id: string) { diaryConfirms.push(id); diaryItems = []; return { status: "written" }; }, async ignore() { return { status: "blocked", reason: "fixture" }; } } } });
+    tasks = [waiting]; await view.refresh();
+    const diaryCard = content.querySelector<HTMLElement>('[data-wb-group="waiting"] [data-wb="diary-review-card"]')!;
+    assert.ok(diaryCard, "journal items to check join 待确认");
+    assert.match(diaryCard.textContent ?? "", /1 项待办与账目.*周五前寄回合同/u);
+    assert.equal(content.querySelector('[data-wb-group="waiting"] .wb-count')?.textContent, "2", "the waiting task and the journal item count together");
+    await click("diary-review-toggle");
+    assert.ok(content.querySelector('[data-wb-group="waiting"] [data-wb-part="diary-review"] .diary-organizer-review'), "rows open below the cards");
+    assert.equal(button("diary-review-toggle").getAttribute("aria-expanded"), "true");
+    await click("diary-confirm-all"); await view.refresh();
+    assert.deepEqual(diaryConfirms, ["diary-1"]);
+    assert.equal(content.querySelector('[data-wb="diary-review-card"]'), null, "a confirmed list leaves the group");
+    Object.assign(host, { diaryOrganizer: undefined }); Object.assign(host.settings, { diaryOrganizerEnabled: false });
+    tasks = tasksBeforeFold; await view.refresh();
+
     failTasks = true; failData = true; await view.refresh();
     assert.match(content.textContent ?? "", /尚未更新/);
     assert.equal(button("resume-stop").disabled, true); assert.equal(button("signal-signal-0").disabled, true);
@@ -579,6 +627,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
 
     await click("search-trigger"); await new Promise(resolve => setTimeout(resolve, 120)); await tick();
     assert.equal(content.querySelectorAll('[role="option"]').length, 6);
+    assert.equal(content.querySelector('[data-wb="search-heading"]')?.textContent, "最近编辑", "before any input the list is the most recently edited notes");
     const input = content.querySelector<HTMLInputElement>('[data-wb="search-input"]')!;
     input.value = "别名"; input.dispatchEvent(new Event("input", { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 120)); await tick();
     assert.equal(content.querySelectorAll('[role="option"]').length, 6, "original metadata search is used");
@@ -627,7 +676,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     publishActivities(partial);
     const partialCard = content.querySelector<HTMLElement>('[data-task="maintenance"]')!;
     assert.equal(partialCard.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, "interrupted");
-    assert.match(partialCard.textContent ?? "", /没做完.*《合成条目》.*保留您的修改.*继续/u);
+    assert.match(partialCard.textContent ?? "", /未完成.*《合成条目》.*保留您的修改.*继续/u);
     assert.equal(maintenanceVisibleCopyIsSafe(partialCard.textContent ?? ""), true);
     assert.equal(maintenanceVisibleCopyIsSafe(button("task-maintenance").getAttribute("aria-label") ?? ""), true);
     assert.equal(maintenanceTask.taskStatus, "running", "business display never rewrites the Catalog object");
@@ -637,7 +686,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(completedCard.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, "completed");
     assert.ok(completedCard.textContent?.includes(maintenanceCompletionText(activity)));
     assert.equal(completedCard.querySelector(".wb-row-title")?.textContent, "整理知识库（20 篇资料）");
-    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["可以交给 Agent", "今天完成"], "maintenance never renames visible groups");
+    assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["可以交给 Agent", "今日已完成"], "maintenance never renames visible groups");
     const firstBatch = { ...activity, batch: { index: 1, total: 2 }, sourcePaths: ["Raw/长文.md"],
       status: "completed" as const, completedAt: Date.now() };
     const secondBatch = { ...activity, id: "second-record", batch: { index: 2, total: 2 }, sourcePaths: ["Raw/笔记甲.md", "Raw/笔记乙.md"],

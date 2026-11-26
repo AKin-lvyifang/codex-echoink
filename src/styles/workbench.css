@@ -118,10 +118,18 @@
 .echoink-workbench .wb-setup-todo-mods svg { width: 13px; height: 13px; }
 .echoink-workbench .wb-setup-todo-actions button.wb-button.is-icon { width: 26px; min-height: 26px; }
 .echoink-workbench .wb-setup-todo-actions button.wb-button.is-icon svg { width: 15px; height: 15px; }
-.echoink-workbench :is(.wb-setup-todo-actions, .wb-guide .wb-section-heading) button.wb-button.is-tertiary { border-width: 0; line-height: 18px; }
+.echoink-workbench :is(.wb-setup-todo-actions, .wb-reminders .wb-section-heading) button.wb-button.is-tertiary { border-width: 0; line-height: 18px; }
 .echoink-workbench button.wb-button.wb-setup-todo.is-more { display: flex; justify-content: flex-start; width: 100%; padding: 9px 14px; border: 0; border-top: 1px solid var(--wb-line); border-radius: 0; font-size: calc(var(--font-text-size, 16px) * .75); line-height: 18px; }
-.echoink-workbench .wb-guide { margin-bottom: 26px; }
-.echoink-workbench .wb-guide .wb-setup-todos { margin-bottom: 0; }
+.echoink-workbench .wb-reminders { margin-bottom: 26px; }
+.echoink-workbench .wb-reminders .wb-setup-todos { margin-bottom: 0; }
+.echoink-workbench .wb-setup-todo .wb-grow { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
+.echoink-workbench .wb-setup-todo-sub { color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
+/* 待确认: decisions, waiting cards and the journal review list stack in one group. */
+.echoink-workbench .wb-confirm { display: flex; flex-direction: column; gap: 10px; }
+.echoink-workbench .wb-confirm > [hidden] { display: none; }
+.echoink-workbench .wb-task-lead { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; color: var(--wb-secondary); }
+.echoink-workbench .wb-task-lead svg { width: 15px; height: 15px; }
+.echoink-workbench .wb-diary-review .wb-task-body { display: flex; flex-direction: column; gap: 10px; }
 .echoink-release-notes-modal {
   width: min(680px, calc(100vw - 32px));
   max-height: min(740px, calc(100vh - 40px));
@@ -294,9 +302,6 @@
 .echoink-workbench .wb-module-setup > .wb-secondary { margin: 0; color: var(--wb-secondary); line-height: 1.7; }
 
 /* Diary results share the quiet workbench row geometry. */
-.diary-organizer-invitation { margin-block: 0 22px; font-size: var(--font-ui-small); color: var(--text-normal); }
-.echoink-workbench .diary-organizer-results { margin-bottom: 26px; }
-.echoink-workbench .diary-organizer-results.is-collapsed .wb-section-heading { margin-bottom: 0; }
 .diary-organizer-list { max-height: 440px; overflow-y: auto; }
 .echoink-workbench .diary-organizer-list.has-editor { overflow-y: auto; }
 .echoink-workbench .diary-organizer-row { flex-wrap: wrap; align-items: start; }
@@ -331,27 +336,13 @@
 .echoink-workbench button.wb-weather-count-button:disabled { opacity: 1; cursor: default; }
 @container wb-page (max-width: 819px) { .echoink-workbench button.wb-weather-count-button { display: none; } }
 
-/* Account-owned cloud state projected as the Paper workbench status strip. */
-.echoink-workbench .wb-cloud-sync-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 9px 14px; border: 1px solid var(--wb-line); border-radius: 12px; min-width: 0; }
-.echoink-workbench .wb-cloud-sync-icon { display: flex; flex: 0 0 15px; width: 15px; height: 15px; }
-.echoink-workbench .wb-cloud-sync-icon svg { width: 15px; height: 15px; }
-.echoink-workbench .wb-cloud-sync-copy { flex: 1; min-width: 0; }
-.echoink-workbench .wb-cloud-sync-status { color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); overflow-wrap: anywhere; }
-.echoink-workbench .wb-cloud-sync-meter { flex: 0 1 160px; width: 160px; max-width: 30%; height: 4px; background: var(--wb-line); border-radius: 2px; overflow: hidden; }
-.echoink-workbench .wb-cloud-sync-fill { height: 100%; background: var(--wb-text); }
-.echoink-workbench .wb-cloud-sync-percent { color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); font-variant-numeric: tabular-nums; }
-.echoink-workbench .wb-cloud-sync-row .wb-cloud-sync-settings { flex: 0 0 auto; width: auto; height: 26px; min-height: 26px; padding: 0 10px; border: 1px solid var(--wb-line); border-radius: 8px; background: var(--wb-bg); color: var(--wb-text); font-size: calc(var(--font-text-size, 16px) * .75); }
-.echoink-workbench .wb-cloud-sync-row.is-warning .wb-cloud-sync-fill { background: var(--wb-warn); }
-.echoink-workbench .wb-cloud-sync-row.is-warning :is(.wb-cloud-sync-status, .wb-cloud-sync-percent) { color: var(--wb-warn); }
+/* Account-owned cloud state as a title-bar icon; a 6px dot marks a state that needs attention. */
+.echoink-workbench button.wb-button.wb-cloud-sync { position: relative; }
 .echoink-workbench .wb-cloud-sync-icon.is-syncing svg { animation: wb-cloud-sync-spin 1s linear infinite; }
 @keyframes wb-cloud-sync-spin { to { transform: rotate(360deg); } }
-@container echoink-workbench (max-width: 520px) {
-  .echoink-workbench .wb-cloud-sync-copy { flex-basis: calc(100% - 25px); }
-  .echoink-workbench .wb-cloud-sync-meter { flex: 1; max-width: none; margin-left: 25px; }
-  .echoink-workbench .wb-cloud-sync-row .wb-cloud-sync-settings { margin-left: auto; }
-}
 @media (prefers-reduced-motion: reduce) { .echoink-workbench .wb-cloud-sync-icon.is-syncing svg { animation: none; } }
-.echoink-workbench .wb-cloud-sync { margin-bottom: 26px; }
+.echoink-workbench .wb-cloud-sync-dot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--wb-warn); pointer-events: none; }
+.echoink-workbench .wb-cloud-sync-dot[hidden] { display: none; }
 
 /* Keep each suggestion's actions together; labels determine button width. */
 .echoink-workbench .wb-signal-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-left: auto; }

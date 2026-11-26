@@ -1,5 +1,4 @@
 import { actionFailureText } from "../core/error-copy";
-import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginPagination, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
@@ -12,7 +11,10 @@ import { JournalTemplateModal } from "./journal-template-modal";
 import { journalMonthSelection, journalPageEntries, journalStats, journalSummary, type JournalStats } from "./journal-stats";
 import { renderPhotoCalendar } from "./photo-calendar";
 import { readNativeJournalSettings } from "./native-journal";
-import { prefillWorkbenchModule } from "./module-navigation";
+import { prefillWorkbenchModule, renderModuleOwnerAction, workbenchModuleOwner } from "./module-navigation";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "./module-actions";
+import { DiaryPersonaPanel } from "./diary-persona-view";
+import { PERSONA_MIN_CHARS, PERSONA_MIN_ENTRIES, isPersonaEligible, journalBodyText, monthKey, type PersonaEntry } from "./diary-persona-core";
 
 export const VIEW_TYPE_ECHOINK_JOURNAL = "echoink-journal";
 const parseDate = (value: string) => { const [year, month, day] = value.split("-").map(Number); return new Date(year, month - 1, day, 12); };
@@ -38,6 +40,9 @@ export class EchoInkJournalView extends ItemView {
   private heatmapSignature = "";
   private heatmapPending = false;
   private readonly summaries = new Map<string, { mtime: number; text: string }>();
+  private readonly bodies = new Map<string, { mtime: number; text: string }>();
+  private persona: DiaryPersonaPanel | null = null;
+  private eggGeneration = 0;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -72,6 +77,7 @@ export class EchoInkJournalView extends ItemView {
   async onClose(): Promise<void> {
     this.closed = true; this.generation++; this.listGeneration++;
     this.foreground?.dispose(); this.foreground = null;
+    this.persona?.dispose(); this.persona = null;
     disposeOriginControls(this.contentEl);
   }
   refreshIfSettingsChanged(): void {
@@ -106,7 +112,7 @@ export class EchoInkJournalView extends ItemView {
       if (unchanged && this.stats && this.statsDate === dateKey(new Date())) { disposeOriginControls(this.field("status")); this.field("status").empty(); return; }
       this.stats = journalStats(snapshot.records, snapshot.settings.folder, snapshot.settings.format);
       this.statsDate = dateKey(new Date());
-      disposeOriginControls(this.field("status")); this.field("status").empty(); this.field("content").hidden = false;
+      disposeOriginControls(this.field("status")); this.field("status").empty(); this.field("content").hidden = !!this.persona?.isOpen();
       this.renderCalendar(); this.renderStats(); await this.renderList();
     } catch (error) {
       if (this.closed || generation !== this.generation) return;
@@ -140,6 +146,7 @@ export class EchoInkJournalView extends ItemView {
     const calendar = overview.createDiv({ cls: "journal-calendar calendar" });
     const nav = calendar.createDiv({ cls: "journal-month-navigation" });
     nav.createEl("h2", { attr: { "data-journal": "month" } });
+    nav.createSpan({ cls: "journal-persona-entry", attr: { "data-journal": "persona-slot" } });
     const monthActions = nav.createDiv({ cls: "journal-month-actions" });
     this.iconButton(monthActions, "chevron-left", this.t("上个月", "Previous month"), () => this.changeMonth(-1));
     this.iconButton(monthActions, "chevron-right", this.t("下个月", "Next month"), () => this.changeMonth(1));
@@ -155,6 +162,17 @@ export class EchoInkJournalView extends ItemView {
     list.createDiv({ cls: "journal-list-toolbar", attr: { "data-journal": "toolbar" } });
     list.createDiv({ cls: "journal-list", attr: { "data-journal": "list", "aria-live": "polite" } });
     list.createDiv({ cls: "journal-pagination", attr: { "data-journal": "pagination" } });
+    this.persona?.dispose();
+    this.persona = new DiaryPersonaPanel({
+      plugin: this.plugin, zh: () => this.plugin.settings.settingsLanguage !== "en",
+      button: (parent, text, action, cls) => this.button(parent, text, action, cls),
+      iconButton: (parent, icon, label, action) => this.iconButton(parent, icon, label, action),
+      openPath: path => this.openPath(path),
+      monthEntries: month => this.personaEntries(month),
+      monthFileCount: month => this.stats?.entries.filter(entry => entry.date.startsWith(`${month}-`)).length ?? 0,
+      show: () => this.setPersonaVisible(true),
+      close: month => this.closePersona(month),
+    }, inner.createDiv({ cls: "journal-persona-page", attr: { "data-journal": "persona" } }));
     this.renderHeader();
   }
   private renderHeader(): void {
@@ -163,14 +181,17 @@ export class EchoInkJournalView extends ItemView {
       const title = header.createDiv({ cls: "journal-title" });
       this.iconButton(title, "arrow-left", this.t("返回工作台", "Back to workbench"), () => this.plugin.activateHomeView({ keepRightSidebar: true })).dataset.echoinkWorkbenchBack = "";
       title.createEl("h1").dataset.echoinkModuleTitle = "";
-      this.button(header, "", async () => { this.updateOwner(); await prefillWorkbenchModule(this.plugin, "journal", "聊聊今天"); }, "is-primary").dataset.journal = "owner";
+      const actions = header.createDiv({ cls: "echoink-module-header-actions" });
+      this.button(actions, "", async () => { this.updateOwner(); await prefillWorkbenchModule(this.plugin, "journal", moduleOwnerActionPrompt("journal", { english: this.english() })); }).dataset.journal = "owner";
+      this.button(actions, "", () => this.openJournal(dateKey(new Date())), "is-primary").dataset.journal = "write";
     }
     header.querySelector("h1")!.setText(this.t("日记", "Journal"));
+    this.field("write").setText(this.t("写日记", "Write journal"));
     this.updateOwner();
   }
+  private english(): boolean { return this.plugin.settings.settingsLanguage === "en"; }
   private updateOwner(): void {
-    const label = moduleOwnerLabel(this.plugin, "journal");
-    this.field("owner").setText(label);
+    renderModuleOwnerAction(this.field("owner"), workbenchModuleOwner(this.plugin, "journal"), moduleOwnerActionLabel("journal", { english: this.english() }));
   }
   private iconButton(parent: HTMLElement, name: string, label: string, action: () => void | Promise<unknown>): HTMLButtonElement {
     const button = this.button(parent, "", action, "is-icon"); button.setAttribute("aria-label", label); setIcon(button, name);
@@ -188,6 +209,7 @@ export class EchoInkJournalView extends ItemView {
     renderPhotoCalendar({ days: this.field("days"), weekdays: this.field("weekdays"), month: this.month, selected: this.selected,
       records: this.snapshot.records, folder: this.snapshot.settings.folder, format: this.snapshot.settings.format, language: this.plugin.settings.settingsLanguage,
       activity: new Map(this.stats.days.map(day => [day.date, day.count])), onSelect: selected => { this.selected = selected; this.renderCalendar(); } });
+    void this.renderPersonaEgg();
     const selected = this.field("selected"); disposeOriginControls(selected); selected.empty();
     selected.createSpan({ text: this.selected });
     const exists = this.stats.entries.some(entry => entry.date === this.selected);
@@ -251,6 +273,8 @@ export class EchoInkJournalView extends ItemView {
         const icon = row.createSpan({ cls: "journal-entry-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, "calendar");
         row.createSpan({ cls: "journal-month-label", text: new Intl.DateTimeFormat(this.plugin.settings.settingsLanguage, { year: "numeric", month: "long" }).format(new Date(this.listYear, month, 1)) });
         row.createSpan({ cls: "journal-month-count", text: this.t(`${count} 篇`, `${count} entries`) });
+        const persona = this.persona?.resultFor(`${this.listYear}-${String(month + 1).padStart(2, "0")}`);
+        if (persona) row.createSpan({ cls: "journal-month-persona", text: persona.type });
         setIcon(row.createSpan({ attr: { "aria-hidden": "true" } }), "chevron-right");
       }
       if (!entries.length) list.createDiv({ cls: "journal-empty", text: this.t("这一年还没有日记", "No journals this year") });
@@ -274,7 +298,7 @@ export class EchoInkJournalView extends ItemView {
         const file = this.app.vault.getAbstractFileByPath(entry.path);
         if (!(file instanceof TFile)) throw new Error(this.t("文件已移动或不存在", "File moved or missing"));
         const cached = this.summaries.get(entry.path);
-        const text = cached?.mtime === entry.mtime ? cached.text : journalSummary(await this.app.vault.cachedRead(file));
+        const text = cached?.mtime === entry.mtime ? cached.text : this.rememberBody(entry.path, entry.mtime, await this.app.vault.cachedRead(file)).summary;
         if (this.closed || generation !== this.listGeneration) return;
         this.summaries.set(entry.path, { mtime: entry.mtime, text }); summary.setText(text);
       } catch {
@@ -284,22 +308,71 @@ export class EchoInkJournalView extends ItemView {
     await Promise.all(reads);
     if (!this.closed && generation === this.listGeneration) list.scrollTop = scroll;
   }
+  /** 该月日记正文，按路径与修改时间缓存；只在月份文件数够了之后才会被调用。 */
+  private async personaEntries(month: string): Promise<PersonaEntry[]> {
+    const entries = this.stats?.entries.filter(entry => entry.date.startsWith(`${month}-`)) ?? [];
+    const read = await Promise.all(entries.map(async entry => {
+      const cached = this.bodies.get(entry.path);
+      if (cached?.mtime === entry.mtime) return { date: entry.date, path: entry.path, text: cached.text };
+      const file = this.app.vault.getAbstractFileByPath(entry.path);
+      if (!(file instanceof TFile)) return null;
+      try { return { date: entry.date, path: entry.path, text: this.rememberBody(entry.path, entry.mtime, await this.app.vault.cachedRead(file)).body }; }
+      catch { return null; }
+    }));
+    return read.filter((entry): entry is PersonaEntry => entry !== null);
+  }
+  /** 列表摘要和人格计数共用一次读取。 */
+  private rememberBody(path: string, mtime: number, markdown: string): { summary: string; body: string } {
+    const summary = journalSummary(markdown), body = journalBodyText(markdown);
+    this.summaries.set(path, { mtime, text: summary }); this.bodies.set(path, { mtime, text: body });
+    return { summary, body };
+  }
+  /** 浏览日记不读正文：先用文件大小粗筛，100 字正文至少 100 字节，够 8 篇才读正文确认。 */
+  private async renderPersonaEgg(): Promise<void> {
+    const slot = this.field("persona-slot"), month = monthKey(this.month), generation = ++this.eggGeneration;
+    if (!slot || !this.persona) return;
+    const plausible = (this.stats?.entries ?? []).filter(entry => {
+      if (!entry.date.startsWith(`${month}-`)) return false;
+      const file = this.app.vault.getAbstractFileByPath(entry.path);
+      return file instanceof TFile && (file.stat?.size ?? 0) >= PERSONA_MIN_CHARS;
+    }).length;
+    if (plausible < PERSONA_MIN_ENTRIES) { slot.empty(); return; }
+    const entries = await this.personaEntries(month);
+    if (this.closed || generation !== this.eggGeneration) return;
+    this.persona.renderEgg(slot, month, isPersonaEligible(entries));
+  }
+  private setPersonaVisible(open: boolean): void {
+    for (const name of ["header", "status"]) this.field(name).hidden = open;
+    this.field("content").hidden = open || !this.stats;
+  }
+  private closePersona(month?: string): void {
+    this.persona?.close(); this.setPersonaVisible(false);
+    if (month && month !== monthKey(this.month)) {
+      this.month = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1);
+      this.selected = journalMonthSelection(this.month, this.selected); this.page = 1;
+      if (this.mode === "month") this.listYear = this.month.getFullYear();
+      if (this.mode === "month") void this.renderList();
+    }
+    this.renderCalendar();
+  }
   private async openPath(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) { new Notice(this.t("这篇日记已移动或不存在", "This journal moved or no longer exists")); await this.refresh(); return; }
     await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
   }
-  private async openSelected(): Promise<void> {
-    const known = this.stats?.entries.find(entry => entry.date === this.selected);
-    if (known) { const preferred = this.dataService.existingJournalForDate(parseDate(this.selected)); await this.openPath(preferred?.path ?? known.path); return; }
-    const existing = this.dataService.existingJournalForDate(parseDate(this.selected));
+  private async openSelected(): Promise<void> { await this.openJournal(this.selected); }
+  /** 打开某天的日记；不存在时走既有的选模板新建流程。 */
+  private async openJournal(date: string): Promise<void> {
+    const known = this.stats?.entries.find(entry => entry.date === date);
+    if (known) { const preferred = this.dataService.existingJournalForDate(parseDate(date)); await this.openPath(preferred?.path ?? known.path); return; }
+    const existing = this.dataService.existingJournalForDate(parseDate(date));
     if (existing) { await this.openPath(existing.path); return; }
     if (!readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).available) {
       new Notice(this.t("请先选择日记保存位置", "Choose a journal folder before creating a journal"));
       await this.plugin.openWorkbenchModuleSettings("journal");
       return;
     }
-    new JournalTemplateModal(this.app, { service: this.dataService, customTemplates: this.dataService.listCustomTemplates(), date: parseDate(this.selected), language: this.plugin.settings.settingsLanguage,
+    new JournalTemplateModal(this.app, { service: this.dataService, customTemplates: this.dataService.listCustomTemplates(), date: parseDate(date), language: this.plugin.settings.settingsLanguage,
       englishEnabled: () => this.plugin.settings.englishDiary.enabled, englishAccess: this.plugin.accountService ?? undefined,
       onEnglish: this.plugin.settings.englishDiary.enabled ? async file => { await this.plugin.englishDiary?.openDiary(file.path); } : undefined,
       onCreated: () => { void this.refresh(); } }).open();

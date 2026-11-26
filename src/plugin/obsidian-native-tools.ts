@@ -59,6 +59,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   };
   const version = async (relativePath: string) => (await snapshot(relativePath))?.version ?? null;
   const run = async (argv: string[], signal?: AbortSignal): Promise<ObsidianCliResult> => {
+    signal?.throwIfAborted();
     const result = await transport.run(argv, signal);
     if (obsidianCliOutputIsNotEnabled(argv[0], result.output)) return { available: false, engine: effectEngine, command: argv[0], status: "unavailable", output: result.output, reason: "Obsidian CLI is not enabled. Turn it on in Obsidian Settings > General > Advanced > Command line interface." };
     const rawContent = OBSIDIAN_CLI_RAW_CONTENT_COMMANDS.includes(argv[0]);
@@ -199,8 +200,10 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
       if (unavailable) return { effect, target, targetVersion, preview: target, unavailable: { ...unavailable, command: request.command }, execute: async () => ({ ...unavailable, command: request.command }) };
       if (!financePrepared) {
         const help = await run(["help"], signal);
-        if (help.status === "unavailable") return { effect, target, targetVersion, preview: target, unavailable: help, execute: async () => help };
-        if (!["completed", "empty"].includes(help.status) || !new RegExp(`(?:^|\\s)${request.command}(?:\\s|$)`, "mu").test(help.output ?? "")) {
+        if (!["completed", "empty"].includes(help.status)) {
+          return { effect, target, targetVersion, preview: target, unavailable: help, execute: async () => help };
+        }
+        if (!new RegExp(`(?:^|\\s)${request.command}(?:\\s|$)`, "mu").test(help.output ?? "")) {
           const failure: ObsidianCliResult = { available: true, engine: effectEngine, command: request.command, status: "unsupported", reason: "Installed public CLI does not advertise this command." };
           return { effect, target, targetVersion, preview: target, unavailable: failure, execute: async () => failure };
         }

@@ -7,6 +7,8 @@ import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type { LifestyleHost } from "./host";
 import type { LifestyleKind } from "./settings";
 import { FinanceWorkspace } from "./finance-view";
+import { renderModuleOwnerAction } from "../home/module-navigation";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "../home/module-actions";
 
 export const LIFE_VIEW_TYPES: Record<LifestyleKind, string> = { finance: "echoink-lifestyle-finance" };
 
@@ -60,20 +62,23 @@ export class LifestyleView extends ItemView {
     const actions = header.createDiv({ cls: "echoink-life-header-actions" });
     const back = actions.createEl("button", { text: "设置" });
     back.onclick = () => void this.service.plugin.openLifestyleSettings("finance");
+    let syncHandoff: (() => void) | null = null;
     if (Platform.isDesktopApp && this.service.plugin.prefillWorkbenchModule && this.service.plugin.getWorkbenchModuleOwner) {
       const handoff = createOriginButton(actions, { cls: "echoink-module-handoff", attr: { type: "button" } });
-      applyAmicroButton(handoff, { variant: "primary" });
-      const label = () => { const owner = this.service.plugin.getWorkbenchModuleOwner!("finance"); handoff.textContent = owner ? `交给 ${owner.name}` : "指定负责人"; };
-      label(); handoff.onfocus = label; handoff.onpointerenter = label;
+      applyAmicroButton(handoff, { variant: "secondary" });
+      // 按钮文字随工作区里选中的月份变化；月份只在工作区内点击切换，点击后同步一次。
+      const label = () => renderModuleOwnerAction(handoff, this.service.plugin.getWorkbenchModuleOwner!("finance"), moduleOwnerActionLabel("finance", { english: false, month: this.financeWorkspace.getSelectedMonth() }));
+      label(); handoff.onfocus = label; handoff.onpointerenter = label; syncHandoff = label;
       handoff.onclick = () => {
         if (handoff.disabled) return;
         label(); handoff.disabled = true; setAmicroButtonPending(handoff, true);
-        void this.service.plugin.prefillWorkbenchModule!("finance", `帮我看看 ${this.financeWorkspace.getSelectedMonth()} 的收支和预算`)
+        void this.service.plugin.prefillWorkbenchModule!("finance", moduleOwnerActionPrompt("finance", { english: false, month: this.financeWorkspace.getSelectedMonth() }))
           .catch(error => new Notice(userFacingErrorText(error, "无法打开任务列表。请稍后重试。")))
           .finally(() => { handoff.disabled = false; setAmicroButtonPending(handoff, false); });
       };
     }
     const body = shell.createDiv({ cls: "echoink-life-body" });
+    if (syncHandoff) { const sync = syncHandoff; body.addEventListener("click", () => { void Promise.resolve().then(sync); }); }
     this.financeWorkspace.render(body);
     this.contentEl.scrollTop = scroll;
   }

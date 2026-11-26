@@ -127,7 +127,7 @@ function decideAgentCapability(context: AgentCapabilityContext, capabilityId: st
   // Ordinary note edits in journal/knowledge folders use the shared notebook
   // permission. Dedicated module Tools still require their own grant.
   const sharedNotebookPath = notebookPath && (capabilityId === "journal" || capabilityId === "knowledge");
-  const granted = sharedNotebookPath ? !agent.disabledCapabilityIds?.includes(capabilityId) : hasAgentCapabilityGrant(agent, capabilityId);
+  const granted = sharedNotebookPath ? hasAgentCapabilityGrant(agent, capabilityId) || !agent.disabledCapabilityIds?.includes(capabilityId) : hasAgentCapabilityGrant(agent, capabilityId);
   if (!routerRead && !granted) return decision(capabilityId, "agent_disabled");
   if (effect === "write" && (!context.access || context.access.permission === "read-only" || context.access.mode === "plan")) return decision(capabilityId, "read_only");
   const s = context.settings;
@@ -157,7 +157,7 @@ export function checkAgentSkill(context: AgentCapabilityContext, skillId: string
     if (skillGrants.some(id => agent.disabledCapabilityIds?.includes(id)) || !skillGrants.some(id => agent.capabilityIds?.includes(id))) return decision(capability, "agent_disabled");
     return checkAgentCapability(context, "conversation", "resource");
   }
-  if (skillGrants.some(id => agent?.disabledCapabilityIds?.includes(id)) || agent?.disabledCapabilityIds?.includes(capability)) return decision(capability, "agent_disabled");
+  if (skillGrants.some(id => agent?.disabledCapabilityIds?.includes(id)) || agent && agent.disabledCapabilityIds?.includes(capability) && !hasAgentCapabilityGrant(agent, capability)) return decision(capability, "agent_disabled");
   if (!agent || !skillGrants.some(id => agent.capabilityIds?.includes(id))) {
     return checkAgentCapability(context, capability, "resource");
   }
@@ -182,9 +182,9 @@ function checkUnscopedOrdinaryRead(context: AgentCapabilityContext, result: Agen
   return result.allowed ? result : checkAgentCapability(context, "conversation", "read");
 }
 /**
- * Reads are open to every hired Agent. Writes: an Agent owns its modules' folders; other modules'
- * folders need that module (or an assistant grant); ordinary folders are open when the person
- * talks to the Agent directly, while a dispatched worker needs the assistant's folder grant.
+ * Reads are open to every hired Agent. Writes: every non-expert Agent may write any folder, subject to
+ * module switches, PRO and access modes. Experts keep their module grants, and a dispatched expert
+ * still needs the assistant's folder grant for ordinary folders.
  */
 export function checkAgentTarget(context: AgentCapabilityContext, target: string, effect: Effect, broad = false,
   _options: { readonly ordinaryRead?: boolean } = {}): AgentCapabilityDecision {
@@ -204,7 +204,7 @@ export function checkAgentTarget(context: AgentCapabilityContext, target: string
   if (!relevant.length) {
     const agent = currentAgent(context);
     const legacyKnowledgeGrant = agent && hasAgentCapabilityGrant(agent, "knowledge");
-    if (context.companyRole !== "worker" || granted || legacyKnowledgeGrant && checkAgentCapability(context, "knowledge", effect).allowed) return ordinary();
+    if (context.companyRole !== "worker" || !isExpertAgent(agent) || granted || legacyKnowledgeGrant && checkAgentCapability(context, "knowledge", effect).allowed) return ordinary();
     const base = ordinary();
     return base.allowed ? decision(value, "folder_grant_required") : base;
   }
@@ -251,8 +251,9 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
   if (context.companyRole === "router" && context.agentId !== GENERAL_ASSISTANT_ID) return decision(toolName, "agent_disabled");
   if (COMPANY_ROUTER_TOOLS.has(toolName)) return context.companyRole === "router" && context.agentId === GENERAL_ASSISTANT_ID ? checkAgentCapability(context, "conversation") : decision(toolName, "agent_disabled");
   if (COMPANY_WORKER_TOOLS.has(toolName)) return context.companyRole === "worker" ? checkAgentCapability(context, "conversation") : decision(toolName, "agent_disabled");
-  // Structure, not prompting, keeps the router from doing the work itself.
-  if (context.companyRole === "router" && (mcp || !ROUTER_READ_TOOLS.has(toolName))) return decision(toolName, "router_only");
+  // Structure, not prompting, keeps the router from doing the work itself. Plugin management is its one exception.
+  const routerPluginTool = !mcp && (toolName === "obsidian_plugin_search" || toolName === "obsidian_cli");
+  if (context.companyRole === "router" && !routerPluginTool && (mcp || !ROUTER_READ_TOOLS.has(toolName))) return decision(toolName, "router_only");
   if (BASE_TOOLS.has(toolName)) return checkAgentCapability(context, "conversation");
   if (MEMORY_TOOLS.has(toolName)) return checkAgentCapability(context, "memory", toolName === "memory_write" ? "write" : "read");
   if (mcp) {
@@ -309,6 +310,11 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
   if (toolName === "obsidian_context") return checkAgentCapability(context, "journal");
   if (toolName === "obsidian_plugin_search") return checkAgentCapability(context, "obsidian-plugins");
   if (toolName === "obsidian_cli") {
+    if (context.companyRole === "router") {
+      if (!args) return checkAgentCapability(context, "obsidian-plugins");
+      const { scope } = context.toolAdapters.obsidianCli({ ...args });
+      return scope.capability === "obsidian-plugins" ? checkAgentCapability(context, "obsidian-plugins", scope.write ? "write" : "read") : decision(toolName, "router_only");
+    }
     if (!args) return checkAgentCapability(context, "vault-notes");
     const { request, scope } = context.toolAdapters.obsidianCli({ ...args });
     const capability = scope.capability;

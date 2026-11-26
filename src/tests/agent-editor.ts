@@ -2,7 +2,8 @@ import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { AgentEditorController } from "../ui/codex-view/agent-editor";
 import type { AgentEditorHost } from "../ui/codex-view/agent-editor-contract";
-import { DEFAULT_SETTINGS } from "../settings/settings";
+import { DEFAULT_SETTINGS, createApiProviderConfig } from "../settings/settings";
+import { agentReasoningChoices } from "../agents/agent-model";
 import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import type { EchoInkResource } from "../resources/types";
 import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../agents/capability-policy";
@@ -13,17 +14,18 @@ const deferred = () => { let resolve!: () => void; const promise = new Promise<v
 
 function assertCapabilityStructure(root: HTMLElement): string {
   const major = [...root.querySelectorAll(".echoink-agent-editor-major > h3")];
-  assert.deepEqual(major.map(node => node.textContent), ["人格", "负责的模块", "能用的能力"]);
-  assert.equal(root.querySelectorAll(".echoink-agent-editor-resource-group").length, 1, "all three capability groups share a single container");
+  assert.deepEqual(major.map(node => node.textContent), ["模型", "人格", "负责的模块", "能用的能力"]);
+  assert.equal(root.querySelectorAll(".echoink-agent-editor-resource-group").length, 1, "both capability groups share a single container");
   const group = root.querySelector<HTMLElement>(".echoink-agent-editor-resource-group")!;
   assert.equal(group.getAttribute("role"), "group");
   const labelledBy = group.getAttribute("aria-labelledby")!;
-  assert.equal(major[2].id, labelledBy, "the shared group belongs to the capabilities heading");
-  assert.equal(group.parentElement, major[2].parentElement);
-  assert.equal(group.querySelectorAll(":scope > .echoink-agent-editor-resource-section").length, 3);
-  assert.deepEqual([...group.querySelectorAll("h4")].map(node => node.textContent), ["模块工具", "我的 Skill", "MCP"]);
-  const skillsHeading = [...group.querySelectorAll("h4")][1];
-  assert.equal(skillsHeading.parentElement!.lastElementChild?.tagName, "BUTTON", "refresh stays at the end of the My Skills heading row");
+  assert.equal(major[3].id, labelledBy, "the shared group belongs to the capabilities heading");
+  assert.equal(group.parentElement, major[3].parentElement);
+  // 2026-11-25: module tools are built into every non-expert Agent, so only Skills and MCP remain.
+  assert.equal(group.querySelectorAll(":scope > .echoink-agent-editor-resource-section").length, 2);
+  assert.deepEqual([...group.querySelectorAll("h4")].map(node => node.textContent), ["技能", "MCP"]);
+  const skillsHeading = [...group.querySelectorAll("h4")][0];
+  assert.equal(skillsHeading.parentElement!.lastElementChild?.tagName, "BUTTON", "refresh stays at the end of the Skills heading row");
   assert.equal(root.querySelector(".echoink-agent-editor-identity .echoink-agent-editor-major"), null, "identity labels keep their existing hierarchy");
   return labelledBy;
 }
@@ -41,7 +43,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     toggleClass(name: string, value: boolean) { this.classList.toggle(name, value); },
     setAttr(name: string, value: string) { this.setAttribute(name, value); }, setText(value: string) { this.textContent = value; },
     createEl: create, createDiv(options: any) { return create.call(this, "div", options); }, createSpan(options: any) { return create.call(this, "span", options); },
-    hasPointerCapture() { return false; }, setPointerCapture() {}, releasePointerCapture() {}, scrollIntoView() {}
+    hasPointerCapture() { return false; }, setPointerCapture() {}, releasePointerCapture() {}, scrollIntoView() {},
+    setCssProps(this: HTMLElement, props: Record<string, string>) { for (const [key, value] of Object.entries(props)) this.style.setProperty(key, value); }
   });
   const button = (root: HTMLElement, label: string) => [...root.querySelectorAll<HTMLButtonElement>("button")].find(node => node.textContent === label)!;
   const input = (root: HTMLElement, value: string) => { const node = root.querySelector<HTMLInputElement>('[data-field="name"]')!; node.value = value; node.dispatchEvent(new win.Event("input", { bubbles: true })); };
@@ -99,8 +102,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector('[data-module-id="knowledge-base"]')!.getAttribute("aria-checked"), "true");
     assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "");
     assert.equal(f.root.querySelector(".echoink-agent-editor-ownership")?.textContent, "");
-    assert.equal(check(f.root, "knowledge").disabled, true, "the owner retains the required module tool grant");
-    assert.equal(check(f.root, "knowledge").getAttribute("aria-checked"), "true");
+    assert.equal(check(f.root, "knowledge"), null, "module tools are no longer listed");
+    assert.doesNotMatch(f.root.textContent!, /必须能用/);
     input(f.root, "𠮷".repeat(25)); assert.equal(f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.disabled, true);
     assert.match(f.root.textContent!, /1–24/);
     input(f.root, "𠮷".repeat(24)); assert.equal(f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.disabled, false);
@@ -109,7 +112,7 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "保留修改");
     button(f.root, "保留修改").click(); await settle();
     f.root.querySelector<HTMLButtonElement>('[data-preset="bookkeeper"]')!.click(); await settle(); button(f.root, "使用预设").click(); await settle();
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "记账员"); assert.match(check(f.root, "finance").getAttribute("aria-description")!, /PRO 已到期/);
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "记账员");
     assert.equal(f.settings.lifestyle.finance.enabled, false, "selecting capabilities must not enable the global module");
     const gate = deferred(); f.saveGate(gate.promise); f.failSave(true);
     f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click();
@@ -137,11 +140,12 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
   }
   {
     const f = fixture(); await f.open(); input(f.root, "跨窗口草稿");
-    check(f.root, "journal").click(); await settle();
+    const journal = () => f.root.querySelector<HTMLButtonElement>('[data-module-id="journal"]')!;
+    journal().click(); await settle();
     await f.reopen(); assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "跨窗口草稿");
-    assert.equal(check(f.root, "journal").getAttribute("aria-checked"), "true");
+    assert.equal(journal().getAttribute("aria-checked"), "true");
     button(f.root, "取消").click(); await f.reopen(); assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "");
-    assert.equal(check(f.root, "journal").getAttribute("aria-checked"), "false");
+    assert.equal(journal().getAttribute("aria-checked"), "false");
     const groupLabel = assertCapabilityStructure(f.root);
     f.failResources(true); button(f.root, "刷新").click();
     assert.equal(assertCapabilityStructure(f.root), groupLabel, "loading keeps one group with the same heading association");
@@ -174,15 +178,14 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(check(f.root, mcpToolCapabilityId(server.id, "read")).getAttribute("aria-checked"), "true");
     assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /资源未启用/); check(f.root, vaultSkillCapabilityId(skill.id)).click();
     f.root.querySelector<HTMLButtonElement>('[data-module-id="journal"]')!.click(); await settle();
-    assert.equal(check(f.root, "journal").disabled, true);
-    assert.equal(check(f.root, "journal").getAttribute("aria-checked"), "true");
-    check(f.root, "journal").click();
+    assert.equal(check(f.root, "journal"), null, "owning a module no longer adds a locked module tool");
     f.settings.resources.mcpConnections[server.id].tools.push(tool("new-tool")); button(f.root, "刷新").click(); await settle();
     assertCapabilityStructure(f.root);
     const again = f.root.querySelector<HTMLDetailsElement>(`details[data-resource-id="${server.id}"]`)!; again.open = true; await settle();
     assert.equal(check(f.root, mcpToolCapabilityId(server.id, "new-tool")).getAttribute("aria-checked"), "false");
     f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle();
-    assert.deepEqual(new Set(f.saved[0].agent.capabilityIds), new Set(["unknown-preserved", "journal", mcpToolCapabilityId(server.id, "read"), vaultSkillCapabilityId(skill.id)]));
+    assert.deepEqual(new Set(f.saved[0].agent.capabilityIds), new Set(["unknown-preserved", mcpToolCapabilityId(server.id, "read"), vaultSkillCapabilityId(skill.id)]));
+    assert.deepEqual(f.saved[0].moduleIds, ["journal"]);
     assert.deepEqual(f.saved[0].agent.disabledCapabilityIds ?? [], []);
     assert.equal(f.settings.resources.catalog.some(item => item.enabled), false, "editor does not mutate the resource registry");
     f.dispose();
@@ -339,8 +342,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     await f.open("english-ui");
     assert.equal(f.root.lang, "en"); assert.equal(f.root.querySelector("h2")?.textContent, "用户原名");
     assert.ok(f.root.querySelector('[aria-label="Back to Agent tasks"]')); assert.ok(button(f.root, "Save")); assert.ok(button(f.root, "Cancel")); assert.ok(button(f.root, "Delete Agent"));
-    assert.deepEqual([...f.root.querySelectorAll("h3")].map(node => node.textContent), ["Identity", "Persona", "Responsible for", "Capabilities"]);
-    assert.match(check(f.root, "finance").getAttribute("aria-description")!, /PRO membership has expired/); assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /Resource disabled/);
+    assert.deepEqual([...f.root.querySelectorAll("h3")].map(node => node.textContent), ["Identity", "Model", "Persona", "Responsible for", "Capabilities"]);
+    assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /Resource disabled/);
     assert.match(f.root.textContent!, /用户自建 Skill 名字/); assert.match(f.root.textContent!, /用户服务名称/);
     const details = f.root.querySelector<HTMLDetailsElement>("details[data-resource-id]")!; assert.match(details.textContent!, /1 tool/); details.open = true; await settle();
     assert.match(details.textContent!, /用户工具名称/); assert.match(check(f.root, mcpToolCapabilityId(server.id, "用户工具名称")).getAttribute("aria-description")!, /Tool disabled/);
@@ -368,8 +371,50 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resource-group .echoink-agent-editor-options").length, 0, "no empty custom Skill list is rendered");
     assert.equal(creation.root.querySelectorAll(".echoink-agent-editor-resource-group .echoink-agent-editor-services").length, 0, "no empty MCP service list is rendered");
     assert.ok(creation.root.querySelector('[data-preset="organizer"][aria-label="Organizer"]'));
-    assert.match(creation.root.textContent!, /No custom Skills/); assert.match(creation.root.textContent!, /No connected MCP services/); assert.ok(button(creation.root, "Create"));
+    assert.match(creation.root.textContent!, /No skills/); assert.match(creation.root.textContent!, /No connected MCP services/); assert.ok(button(creation.root, "Create"));
     creation.dispose();
     console.log("PASS English renderer labels/status/style/deletion copy and unchanged user identity/resource/tool content");
+  }
+  {
+    // 2026-11-25: model section, takeover hint and the assistant page without the retired folder switch.
+    const f = fixture();
+    const provider = createApiProviderConfig("deepseek", "editor-provider"); provider.apiKey = "sk-synthetic-editor-0000000000";
+    f.settings.apiProviders = [provider];
+    const model = provider.models[0];
+    f.settings.agentRegistry.agents.push({ id: "owner", name: "老负责人", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: [] },
+      { id: "picker", name: "新同事", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: [] });
+    f.settings.agentRegistry.moduleOwners.finance = "owner";
+    await f.open("picker");
+    const order = [...f.root.querySelectorAll(".echoink-agent-editor-fields > section > h3")].map(node => node.textContent);
+    assert.deepEqual(order, ["身份", "模型", "人格", "负责的模块", "能用的能力"]);
+    const select = f.root.querySelector<HTMLElement & { value: string }>('[data-field="model"]')!;
+    assert.equal(select.value, "", "a new Agent follows the conversation");
+    assert.match(select.textContent!, /跟随当前对话/);
+    assert.equal(f.root.querySelector<HTMLElement>(".echoink-agent-editor-model-effort")!.hidden, true, "following has no effort control");
+    select.value = JSON.stringify([provider.id, model.id]); select.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
+    const effort = f.root.querySelector<HTMLElement>(".echoink-agent-editor-model-effort")!;
+    assert.equal(effort.hidden, false);
+    const choices = agentReasoningChoices(provider, model);
+    if (choices.kind === "none") assert.match(effort.textContent!, /此模型不支持深度思考。/);
+    else {
+      assert.match(effort.textContent!, choices.kind === "toggle" ? /深度思考/ : /思考强度/);
+      assert.equal(effort.querySelectorAll(".echoink-agent-editor-effort-option").length, choices.options.length);
+      assert.equal(effort.querySelectorAll('[role="radio"]').length, choices.options.length, "one shared-track radio per effort");
+      assert.equal(effort.querySelector<HTMLElement>(".echoink-agent-editor-effort")!.style.getPropertyValue("--echoink-agent-effort-count"), String(choices.options.length));
+    }
+    const finance = f.root.querySelector<HTMLButtonElement>('[data-module-id="finance"]')!;
+    const ownership = () => finance.closest("label")!.querySelector(".echoink-agent-editor-ownership")!.textContent;
+    assert.equal(ownership(), "老负责人");
+    finance.click(); await settle();
+    assert.equal(ownership(), "将从老负责人接管");
+    f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle();
+    assert.equal(f.saved[0].agent.model?.providerSettingsId, provider.id); assert.equal(f.saved[0].agent.model?.modelId, model.id);
+    assert.equal(f.saved[0].agent.capabilityIds?.includes("finance"), false, "owning a module adds no capability grant");
+    f.dispose();
+    const sol = fixture(); await sol.open("sol");
+    assert.deepEqual([...sol.root.querySelectorAll(".echoink-agent-editor-fields > section > h3")].map(node => node.textContent), ["身份", "模型", "人格", "员工审批"]);
+    assert.doesNotMatch(sol.root.textContent!, /开放文件夹/);
+    sol.dispose();
+    console.log("PASS model section order/follow/effort, takeover hint and assistant page without folder grants");
   }
 }

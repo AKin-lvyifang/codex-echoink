@@ -1,6 +1,8 @@
+import { disposeComposerPoints } from "./codex-view/composer-points";
 import { bindPressFeedback } from "./press-feedback";
 import { ACTION_FAILED, failureText, joinErrorCopy, NEXT } from "../core/error-copy";
 import { requireModuleOwner } from "../agents/registry";
+import { resolveAgentModelSelection, withAgentModel } from "../agents/agent-model";
 import { renderComposerSubmission } from "./composer-submission-renderer";
 import type { DesktopComposerDraft } from "./codex-view/composer-submission";
 import type { PiConversationProjection } from "../harness/pi-native/contracts";
@@ -53,6 +55,7 @@ import { newId, providerConnectionLabel, apiProviderHasUsableCredential, getApiP
 import type { EchoInkResource } from "../resources/types";
 import type {
   PermissionMode,
+  ReasoningEffort,
   TokenUsage,
   UiMode
 } from "../types/app-server";
@@ -363,6 +366,8 @@ export class CodexView extends ItemView {
       annotations: composerSelectionAnnotations(this.inputEl), annotationFragments: snapshotSelectionDraft(this.inputEl).fragments,
       noteMentions: [...composerNoteMentionSelections(this.inputEl)], drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill,
       selectedProviderSettingsId: this.selectedProviderSettingsId, selectedModel: this.selectedModel,
+      ...(this.selectedReasoning !== undefined ? { selectedReasoning: this.selectedReasoning } : {}),
+      ...(this.selectedModelExplicit ? { selectedModelExplicit: true } : {}),
       selectedPermission: this.selectedPermission, selectedMode: this.selectedMode };
     this.taskNavigation.save(draft, page);
     this.composerSessionDrafts.set(owner, { text: draft.text, annotations: snapshotSelectionDraft(this.inputEl), attachments: draft.attachments,
@@ -379,8 +384,12 @@ export class CodexView extends ItemView {
     for (const mention of draft.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
     const page = this.taskNavigation.page;
     const recovery = page.kind === "detail" ? this.plugin.taskToolCallRecovery?.(page.taskId, this.taskInterruptions.get(page.taskId)?.info) : undefined;
-    this.selectedProviderSettingsId = draft.selectedProviderSettingsId ?? recovery?.target?.providerSettingsId ?? this.plugin.settings.activeApiProviderId;
-    this.selectedModel = draft.selectedModel ?? recovery?.target?.modelId ?? this.plugin.settings.defaultModel;
+    // A page without its own choice starts on its Agent's model; switching models later stays with this page.
+    const agentModel = !draft.selectedModelExplicit && !recovery?.target && this.plugin.settings.agentRegistry?.agents.some(agent => agent.model) ? resolveAgentModelSelection(this.plugin.settings, page.kind === "list" ? page.agentId : this.sessionById(page.taskId)?.agentId) : null;
+    this.selectedModelExplicit = draft.selectedModelExplicit === true;
+    this.selectedProviderSettingsId = agentModel?.providerSettingsId ?? draft.selectedProviderSettingsId ?? recovery?.target?.providerSettingsId ?? this.plugin.settings.activeApiProviderId;
+    this.selectedModel = agentModel?.modelId ?? draft.selectedModel ?? recovery?.target?.modelId ?? this.plugin.settings.defaultModel;
+    this.selectedReasoning = agentModel ? agentModel.reasoning : draft.selectedReasoning;
     this.selectedPermission = draft.selectedPermission ?? this.plugin.settings.defaultPermission;
     this.selectedMode = draft.selectedMode ?? "agent";
     this.repairXiaoechoComposerSelection();
@@ -829,7 +838,7 @@ export class CodexView extends ItemView {
     this.taskEditorOnboarding = onboarding;
     this.taskEditor = new AgentEditorController({
       onboarding, confirmLeave: onboarding,
-      get settings() { return plugin.settings; }, draftCacheKey: this.plugin,
+      get settings() { return plugin.settings; }, draftCacheKey: this.plugin, app: this.app,
       loadResources: () => this.plugin.buildRuntimeEchoInkResourceCatalog(),
       saveAgent: (agent, moduleIds, baseline) => onboarding ? this.plugin.saveOnboardingAgentDefinition(agent, moduleIds) : this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
@@ -903,7 +912,7 @@ export class CodexView extends ItemView {
     if (!onboardingScope && requireModuleOwner(this.plugin.settings.agentRegistry, signal.moduleId).id !== agentId) throw new Error("负责人已变化，请重新发起。");
     this.saveTaskComposerDraft();
     const draft: StoredSession = { id: newId("workbench-draft"), agentId, title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
-    const options = { ...this.currentTurnOptions(draft), ...(onboardingScope ? { mode: "agent" as const, permission: "workspace-write" as const } : {}) };
+    const options = { ...withAgentModel(this.plugin.settings, agentId, this.currentTurnOptions(draft)), ...(onboardingScope ? { mode: "agent" as const, permission: "workspace-write" as const } : {}) };
     const provider = this.plugin.settings.apiProviders.find(value => value.id === options.providerSettingsId);
     if (!provider || !getApiProviderModel(provider, options.model) || !apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential) || validateApiProvider(provider).length) {
       throw new WorkbenchSetupRequired(this.taskText("先配置可用的模型。", "Set up an available model first."), "models");
@@ -980,6 +989,7 @@ export class CodexView extends ItemView {
     item.pdfTaskRequest = request;
     await this.plugin.validatePdfNavigationStart(input);
     const owner = requireModuleOwner(this.plugin.settings.agentRegistry, "pdf-reading");
+    item.turnOptions = withAgentModel(this.plugin.settings, owner.id, item.turnOptions);
     const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: input.attachment.name,
       agentId: owner.id, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
     const session = createPiConversationShell(this.sessionHost(), entry);
@@ -1025,7 +1035,7 @@ export class CodexView extends ItemView {
     const owner = this.plugin.getWorkbenchModuleOwner("knowledge-base");
     if (!owner) { this.plugin.openModuleOwnerPicker("knowledge-base", async () => this.openGenerationForPath(path)); return; }
     const draft: StoredSession = { id: "generation-draft", title: "", agentId: owner.id, cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
-    new GenerationModal(this.plugin, { sourcePaths: service.sourcesFromPath(path), service, turnOptions: () => this.currentTurnOptions(draft),
+    new GenerationModal(this.plugin, { sourcePaths: service.sourcesFromPath(path), service, turnOptions: () => withAgentModel(this.plugin.settings, draft.agentId, this.currentTurnOptions(draft)),
       onSubmit: async (request, options) => {
         const reason = service.disabledReason({ ...options, outputKind: request.outputKind }); if (reason) throw new Error(reason);
         this.saveTaskComposerDraft();
@@ -1412,6 +1422,8 @@ export class CodexView extends ItemView {
   private attachments: StoredAttachment[] = [];
   private selectedProviderSettingsId = "";
   private selectedModel = "";
+  private selectedReasoning: ReasoningEffort | undefined;
+  private selectedModelExplicit = false;
   private selectedPermission: PermissionMode;
   private selectedMode: UiMode;
   private xiaoechoCatalogDispose?: () => void;
@@ -1643,7 +1655,10 @@ export class CodexView extends ItemView {
     } finally { this.settleTaskUiReady(false); }
   }
 
+  private disposePoints?: () => void;
+
   async onClose(): Promise<void> {
+    this.disposePoints?.(); this.disposePoints = undefined;
     this.pressFeedbackDispose?.(); this.pressFeedbackDispose = undefined;
     this.xiaoechoCatalogDispose?.(); this.xiaoechoCatalogDispose = undefined;
     this.companyCard?.dispose(); this.companyCard = undefined;
@@ -1852,6 +1867,8 @@ export class CodexView extends ItemView {
   applySavedComposerDefaults(): void {
     this.selectedProviderSettingsId = this.plugin.settings.activeApiProviderId;
     this.selectedModel = this.plugin.settings.defaultModel;
+    this.selectedReasoning = undefined;
+    this.selectedModelExplicit = false;
     this.selectedPermission = this.plugin.settings.defaultPermission;
     this.repairXiaoechoComposerSelection();
     this.renderToolbar();
@@ -2053,7 +2070,9 @@ export class CodexView extends ItemView {
 
   private render(): void {
     if (!Platform.isMobile && this.plugin.settings.agentRegistry) this.taskUiMounted = true;
+    this.disposePoints?.();
     renderViewShell(this.shellHost());
+    this.disposePoints = () => disposeComposerPoints(this.inputEl);
     this.turnNavigator?.dispose();
     this.turnNavigator = new TurnNavigator(this.messageHost(), this.turnNavigatorEl);
     if (!Platform.isMobile && this.plugin.settings.agentRegistry) this.mountTaskNavigation();

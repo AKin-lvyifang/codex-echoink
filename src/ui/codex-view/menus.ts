@@ -71,6 +71,7 @@ export interface ModelMenuState {
   subscribeChanges?: (listener: () => void) => () => void;
   language?: SettingsLanguage;
   providerModels: ComposerProviderModelOption[];
+  pointsGrouping?: { balance?: string };
   selectedProviderSettingsId: string;
   selectedModel: string;
   selectedReasoning: ReasoningEffort | null;
@@ -124,6 +125,7 @@ interface ComposerParameterOption {
   selected: boolean;
   group?: string;
   groupId?: string;
+  groupDetail?: string;
   providerSettingsId?: string;
 }
 
@@ -446,20 +448,29 @@ function parameterSections(
     model.providerSettingsId === state.selectedProviderSettingsId
     && model.modelId === state.selectedModel
   );
+  const grouping = state.pointsGrouping;
+  const options = grouping
+    ? [...state.providerModels.filter(model => model.isXiaoechoModel), ...state.providerModels.filter(model => !model.isXiaoechoModel)]
+    : state.providerModels;
   const sections: ComposerParameterSection[] = [{
       id: "model",
       icon: "box",
       label: conversationUiText(language, "模型", "Model"),
       currentValue: selectedModel?.modelName || state.selectedModel || conversationUiText(language, "未选择", "Not selected"),
-      options: state.providerModels.map((model) => ({
+      options: options.map((model) => ({
         value: model.modelId,
         label: model.modelName,
-        typicalPointsLabel: model.typicalPointsLabel,
+        typicalPointsLabel: grouping && model === selectedModel ? undefined : model.typicalPointsLabel,
         isXiaoechoModel: model.isXiaoechoModel,
         selected: model.providerSettingsId === state.selectedProviderSettingsId
           && model.modelId === state.selectedModel,
-        group: model.providerName,
-        groupId: model.providerSettingsId,
+        group: grouping ? model.isXiaoechoModel
+          ? conversationUiText(language, "小echo 云端", "Xiaoecho cloud")
+          : conversationUiText(language, "其他模型", "Other models") : model.providerName,
+        groupId: grouping ? model.isXiaoechoModel ? "xiaoecho" : "other" : model.providerSettingsId,
+        groupDetail: grouping ? model.isXiaoechoModel
+          ? grouping.balance !== undefined ? conversationUiText(language, `剩余 ${grouping.balance} 点`, `${grouping.balance} pts left`) : undefined
+          : conversationUiText(language, "不消耗 EchoInk 点数", "Uses no EchoInk points") : undefined,
         providerBrand: model.providerBrand,
         providerSettingsId: model.providerSettingsId
       })),
@@ -726,11 +737,12 @@ function openParameterSubmenu(
   let previousGroupId = "";
   for (const option of section.options) {
     if (option.group && option.groupId !== previousGroupId) {
-      panel.createDiv({
-        cls: "codex-parameter-option-group",
-        text: option.group,
+      const heading = panel.createDiv({
+        cls: option.groupDetail ? "codex-parameter-option-group echoink-model-group" : "codex-parameter-option-group",
         attr: { role: "presentation" }
       });
+      heading.createSpan({ text: option.group });
+      if (option.groupDetail) heading.createSpan({ cls: "echoink-model-group-detail", text: option.groupDetail });
       previousGroupId = option.groupId ?? option.group;
     }
     const button = panel.createEl("button", {

@@ -125,7 +125,8 @@ export async function runOrdinaryNoteReadCapabilityTests(root: string): Promise<
   agentId = "sol";
   sol.disabledCapabilityIds = ["journal", "knowledge"];
   assert.equal(checkAgentTool(context(), "note_read", { relativePath: "Daily/今日.md" }).allowed, true);
-  assert.equal(checkAgentTool(context(), "note_update", { relativePath: "Daily/今日.md" }).reason, "agent_disabled", "writing a module folder still needs that module");
+  // 2026-11-25: legacy per-Agent module opt-outs are no longer honored; the module's own switch still is.
+  assert.equal(checkAgentTool(context(), "note_update", { relativePath: "Daily/今日.md" }).reason, "module_disabled", "writing a module folder still follows that module's switch");
   sol.disabledCapabilityIds = [];
 
   bindings.roles.wiki.enabled = false; bindings.roles.wiki.readPaths = ["关闭"];

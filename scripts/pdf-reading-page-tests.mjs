@@ -14,7 +14,7 @@ try {
   const output = path.join(fixture, "tests.mjs");
   await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: 'import { runPdfReadingPageTests } from "./src/tests/pdf-reading-page"; await runPdfReadingPageTests();', resolveDir: root, loader: "ts" },
-    outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
+    outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent", loader: { ".svg": "text", ".webp": "dataurl" },
     plugins: [{ name: "pdf-page-local-host", setup(build) {
       build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(root, "src/tests/origin-controls-shim.ts") }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(root, "src/tests/obsidian-shim.ts") }));

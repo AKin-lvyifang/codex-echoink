@@ -597,6 +597,8 @@ export interface CodexForObsidianSettings {
   cloudSync: CloudSyncSettings;
   /** 智能判断（PRO）：开关默认开；首次卡片与“本月用完”提示各只出一次。 */
   smartJudgment: SmartJudgmentSettings;
+  /** 日记人格彩蛋：按月份保存的结果和入口出场记录。 */
+  diaryPersona: DiaryPersonaState;
   quickChat: QuickChatSettings;
   homeModules: Record<string, boolean>;
   lifestyle: LifestyleSettings;
@@ -631,6 +633,7 @@ import { normalizeNewsSettings } from "../news/settings";
 export { normalizeCloudSyncSettings, type CloudSyncSettings } from "../sync/cloud/settings";
 import { normalizeSmartJudgmentSettings, type DecisionPersistentState as SmartJudgmentSettings } from "../membership/decision-client";
 export { normalizeSmartJudgmentSettings, type SmartJudgmentSettings };
+import { normalizeDiaryPersonaState, type DiaryPersonaState } from "../home/diary-persona-core";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   weatherCity: null,
@@ -669,6 +672,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   syncMirrorEnabled: true,
   cloudSync: { enabled: false, excludedFolders: [], includeAttachments: true, deviceName: "" },
   smartJudgment: { enabled: true, introSeen: false },
+  diaryPersona: { results: {}, seen: [] },
   mcpServer: normalizeEchoInkMcpServerSettings(undefined),
   quickChat: {
     enabled: false,
@@ -848,6 +852,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     syncMirrorEnabled: data?.syncMirrorEnabled !== false,
     cloudSync: normalizeCloudSyncSettings(data?.cloudSync),
     smartJudgment: normalizeSmartJudgmentSettings(data?.smartJudgment),
+    diaryPersona: normalizeDiaryPersonaState(data?.diaryPersona),
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
     diaryOrganizerEnabled: data?.diaryOrganizerEnabled === true,
     diaryOrganizerPromptDismissed: data?.diaryOrganizerPromptDismissed === true,

@@ -8,6 +8,7 @@ import {
   clearApiProviderModelInvalidStoredReasoningEffort
 } from "../settings/settings";
 import {
+  isEchoInkPiReasoningEffortSupported,
   resolveEchoInkPiReasoningCapabilities,
   type EchoInkPiReasoningOption,
   type EchoInkPiReasoningCapabilities
@@ -27,10 +28,12 @@ export interface ComposerReasoningState {
   readonly previousEffort: ReasoningEffort | undefined;
 }
 
+/** `sessionEffort` is a conversation's own effort (from its Agent); it never changes the model settings. */
 export function resolveComposerReasoningState(
   settings: Pick<CodexForObsidianSettings, "apiProviders">,
   providerSettingsId: string,
-  modelId: string
+  modelId: string,
+  sessionEffort?: ReasoningEffort
 ): Readonly<ComposerReasoningState> | null {
   const provider = settings.apiProviders.find(
     (candidate) => candidate.id === providerSettingsId
@@ -43,9 +46,24 @@ export function resolveComposerReasoningState(
     model
   );
   const supported = capabilities.supported;
+  const enabledOptions = capabilities.enabledOptions;
+  if (sessionEffort && isEchoInkPiReasoningEffortSupported(capabilities, sessionEffort)) {
+    const on = supported && sessionEffort !== "none";
+    return Object.freeze({
+      provider,
+      model,
+      capabilities,
+      supported,
+      enabled: on,
+      adjustable: on && enabledOptions.length > 1,
+      enabledOptions,
+      effort: sessionEffort,
+      status: on ? "valid" : supported ? "disabled" : "unavailable",
+      previousEffort: model.reasoningEffort
+    });
+  }
   const enabled = supported
     && (!capabilities.supportsOff || model.reasoningEnabled);
-  const enabledOptions = capabilities.enabledOptions;
   const adjustable = enabled && enabledOptions.length > 1;
   const previousEffort = model.reasoningEffort;
   const invalidStoredEffort =

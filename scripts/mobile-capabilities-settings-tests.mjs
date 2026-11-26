@@ -60,14 +60,15 @@ await test("Skill Agent rows retain configured grants while global/runtime avail
   f.settings.agentRegistry.agents.push({ ...plain(sol), id: "journal-granted", name: "Journal", capabilityIds: ["journal"] },
     { ...plain(sol), id: "journal-not-granted", name: "Other", capabilityIds: ["knowledge"] });
   const granted = snapshot => plain(snapshot.agents.filter(agent => agent.allowed).map(agent => agent.id));
-  const before = await f.service.readSkill("daily-journal"); assert.deepEqual(granted(before), ["sol", "generalist", "journal-granted"]);
+  // 2026-11-25: module Skills follow built-in module work, open to every non-expert Agent; a Skill opt-out still narrows it.
+  const before = await f.service.readSkill("daily-journal"); assert.deepEqual(granted(before), ["sol", "generalist", "journal-granted", "journal-not-granted"]);
   await f.service.setSkillEnabled("daily-journal", false);
   const disabled = await f.service.readSkill("daily-journal"); assert.deepEqual(granted(disabled), granted(before));
   assert.throws(() => f.policy("journal-granted").assertSkill("daily-journal"));
-  sol.disabledCapabilityIds = ["journal"]; assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["generalist", "journal-granted"]);
+  sol.disabledCapabilityIds = ["skill:daily-journal"]; assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["generalist", "journal-granted", "journal-not-granted"]);
   await f.service.setSkillEnabled("daily-journal", true);
   f.settings.mobileUi.moduleEnabled = { journal: false };
-  assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["generalist", "journal-granted"]);
+  assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["generalist", "journal-granted", "journal-not-granted"]);
   assert.throws(() => f.policy("journal-granted").assertSkill("daily-journal"));
   const desktopOnly = await f.service.readSkill("obsidian-cli"); assert.equal(desktopOnly.mobileAvailable, false); assert.equal(desktopOnly.agents.find(agent => agent.id === "sol").allowed, true);
   assert.throws(() => f.policy().assertSkill("obsidian-cli"));

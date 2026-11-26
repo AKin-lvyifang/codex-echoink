@@ -53,6 +53,17 @@ export function latestFailedPdfRequests(jobs: readonly PdfJob[]): PdfJob[] {
   return [...terminal.values()].filter(job => job.state === "failed" || job.state === "partial");
 }
 
+const SIGNAL_ACTIONS: Record<WorkbenchSignalId, readonly [string, string]> = {
+  1: ["梳理优先级", "Prioritize"], 2: ["重排待办", "Reschedule"], 3: ["查看预算", "Check budget"], 4: ["写日记", "Write journal"],
+  5: ["生成英文稿", "Draft in English"], 6: ["整理 Inbox", "Sort Inbox"], 7: ["整理资料", "Organize sources"], 8: ["继续处理", "Resume"],
+  9: ["开始复盘", "Start review"], 10: ["补写日记", "Catch up journal"], 11: ["归类账目", "Categorize"],
+  13: ["导入账单", "Import statement"], 14: ["补充关联", "Add links"], 15: ["梳理体系", "Map the domain"]
+};
+/** The suggestion's button names the concrete action the general assistant will take. */
+export function workbenchSignalAction(id: WorkbenchSignalId, english = false): string {
+  return SIGNAL_ACTIONS[id]?.[english ? 1 : 0] ?? (english ? "Handle" : "处理");
+}
+
 export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSignal[] {
   const { now } = facts, date = new Date(now), today = localWorkbenchDate(date), month = today.slice(0, 7);
   const enabled = new Set(facts.modules), signals: WorkbenchSignal[] = [], english = facts.language === "en";
@@ -86,15 +97,15 @@ export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSigna
       const limit = budget!.allocations[category], spent = net.get(category) ?? 0;
       if (!Number.isFinite(limit) || limit <= 0 || spent / limit < 0.8) continue;
       const percent = Math.floor(spent / limit * 100);
-      add(3, "finance", "category-budget", `${month}:${category}`, "wallet", english ? `${category}: ${percent}% of monthly budget used` : `${category}本月预算已用 ${percent}%`,
+      add(3, "finance", "category-budget", `${month}:${category}`, "wallet", english ? `"${category}": ${percent}% of monthly budget used` : `“${category}”本月预算已用 ${percent}%`,
         `请帮我看看 ${month}「${category}」的分类预算与净支出，当前已用 ${percent}%。`, [month, category]);
     }
   }
   const threeEmpty = facts.journals.length === 3 && facts.journals.every(day => day.state === "empty");
   if (!threeEmpty && date.getHours() >= 18 && facts.journals[0]?.state === "empty") add(4, "journal", "today", today, "notebook-pen",
-    english ? "Today's journal is still empty" : "今天还没写日记", `请陪我写 ${today} 的日记，先帮我回想今天值得记录的事。`, [facts.journals[0].path]);
+    english ? "No journal entry today" : "今日未写日记", `请陪我写 ${today} 的日记，先帮我回想今天值得记录的事。`, [facts.journals[0].path]);
   if (facts.journals[0]?.state === "body" && /[\p{Script=Han}]/u.test(facts.journals[0].text) && facts.englishMissing === true) add(5, "english-diary", "missing-english", today, "languages",
-    english ? "Today's journal has no English draft" : "今天的日记还没有英文稿", `请把 ${today} 的日记整理成英文稿，沿用已有英文日记流程。`, [facts.journals[0].path]);
+    english ? "No English draft for today's journal" : "今日日记暂无英文稿", `请把 ${today} 的日记整理成英文稿，沿用已有英文日记流程。`, [facts.journals[0].path]);
   const inbox = facts.inbox.filter(file => file.enteredAt !== undefined);
   if (inbox.length >= 3 || inbox.some(file => now - file.enteredAt! > 72 * 3_600_000)) add(6, "knowledge-base", "inbox", facts.inboxScope, "inbox",
     english ? `${inbox.length} new Inbox items to organize` : `Inbox 新增 ${inbox.length} 条待整理内容`, "请帮我逐条整理这些 Inbox 新增内容，保留不能确认完成的条目。", inbox.map(file => file.path), Object.fromEntries(inbox.map(file => [file.path, file.fingerprint])));
@@ -105,15 +116,15 @@ export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSigna
   if (pdf.length) add(8, "pdf-reading", "unfinished", "history", "file-warning", english ? `${pdf.length} PDF requests unfinished` : `${pdf.length} 份 PDF 处理未完成`,
     "请帮我检查这些 PDF 未完成的处理目标，沿原任务继续；原件缺失时先说明需要重新选择。", pdf.map(job => job.id));
   if ((date.getDay() === 5 && date.getHours() >= 18 || date.getDay() === 6 || date.getDay() === 0) && facts.reviewComplete === false) add(9, "review", "week", workbenchWeekKey(now), "calendar-check",
-    english ? "This week's review is not saved yet" : "本周还没有完成复盘", `请帮我完成从 ${workbenchWeekKey(now)} 开始的本周正式复盘，并保存复盘成果。`, [workbenchWeekKey(now)]);
-  if (threeEmpty) add(10, "journal", "three-days", today, "notebook-pen", english ? "No journal writing for 3 calendar days" : "已经连续 3 天没写日记", "请陪我回顾今天、昨天和前天，先从我愿意记录的一天开始。", facts.journals.map(day => day.path));
+    english ? "This week's review is not done" : "本周未完成复盘", `请帮我完成从 ${workbenchWeekKey(now)} 开始的本周正式复盘，并保存复盘成果。`, [workbenchWeekKey(now)]);
+  if (threeEmpty) add(10, "journal", "three-days", today, "notebook-pen", english ? "No journal entry for 3 days" : "已连续 3 天未写日记", "请陪我回顾今天、昨天和前天，先从我愿意记录的一天开始。", facts.journals.map(day => day.path));
   if (facts.finance) {
     const pending = effectiveFinanceEntries(facts.finance.entries, month, today).filter(entry => entry.classificationPending === true);
     if (pending.length) add(11, "finance", "classification", month, "tags", english ? `${pending.length} transactions to categorize` : `${pending.length} 条账目待分类`,
       `请帮我为 ${month} 明确标记为待分类的账目提出分类并保存，保留我主动选定的分类。`, pending.map(entry => entry.id));
     const at = facts.finance.data.lastSuccessfulImportAt;
     if (typeof at === "number" && Number.isFinite(at) && at > 0 && at <= now && now - at > 720 * 3_600_000) add(13, "finance", "import-gap", "ledger", "file-input",
-      english ? "More than 30 days since the last successful import" : "距离上次成功导入账单已超过 30 天", "请帮我检查账单导入情况，并引导我导入最近账单。", []);
+      english ? "No statement imported for over 30 days" : "已超过 30 天未导入账单", "请帮我检查账单导入情况，并引导我导入最近账单。", []);
   }
   if (facts.isolated && facts.isolated.length >= 5) add(14, "knowledge-base", "isolated", facts.knowledgeScope, "network", english ? `${facts.isolated.length} notes have no resolved links` : `${facts.isolated.length} 篇笔记缺少关联`,
     "请检查这些知识成果和项目笔记，依据真实内容补充合适的关联，不添加无依据的链接。", facts.isolated);

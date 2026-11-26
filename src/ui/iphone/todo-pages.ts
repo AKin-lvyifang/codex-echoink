@@ -1,4 +1,5 @@
 import { settingsRow } from "./settings-elements";
+import { moduleOwnerActionPrompt } from "../../home/module-actions";
 import type { MobileTodoSnapshot } from "../../mobile/module-contracts";
 import type { TodoInput } from "../../home/todo-store";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
@@ -11,7 +12,7 @@ import { settingsMessage } from "./settings-language";
 
 export async function openIPhoneTodos(ctx: IPhonePageContext): Promise<void> {
   const id = "iphone-module-todos"; if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
-  const view = new IPhoneModulePage(ctx, id, "待办", "todos", "帮我把今天和本周的待办排个顺序"), api = ctx.host.services.modules.todos;
+  const view = new IPhoneModulePage(ctx, id, "待办", "todos", moduleOwnerActionPrompt("todos", { english: ctx.host.settings().settingsLanguage === "en" })), api = ctx.host.services.modules.todos;
   let snapshot: MobileTodoSnapshot | undefined, revision = 0;
   const state = newMobileTodoPlannerState(moduleDate(new Date())), host = el(ctx.document, "div", "ip-todo-planner");
   const render = () => {

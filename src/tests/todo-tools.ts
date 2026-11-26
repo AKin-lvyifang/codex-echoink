@@ -88,11 +88,11 @@ export async function runTodoToolTests(root: string): Promise<void> {
     assert.equal((await call("todo_add", { title: "Denied" })).blocked, true);
   }
   access = { permission: "workspace-write", mode: "agent", memoryMode: "normal" };
+  // 2026-11-25: to-do work is built into every non-expert Agent; a legacy opt-out no longer hides the tools.
   agent.disabledCapabilityIds = ["todos"];
-  for (const tool of PI_TODO_TOOL_IDS) assert.equal(checkAgentTool(context(), tool).allowed, false, `${tool} hidden-tool path must deny`);
-  assert.equal((await call("todo_add", { title: "Capability off" })).blocked, true);
-  assert.equal((await call("todo_query", {})).blocked, true);
-  assert.equal(checkAgentSkill(context(), "todo-operations").reason, "agent_disabled");
+  for (const tool of PI_TODO_TOOL_IDS) assert.equal(checkAgentTool(context(), tool).allowed, true, `${tool} stays available`);
+  agent.disabledCapabilityIds = ["skill:todo-operations"];
+  assert.equal(checkAgentSkill(context(), "todo-operations").reason, "agent_disabled", "the Skill itself can still be switched off");
   assert.equal(checkAgentSkillPath(context(), resource.contentPath!).reason, "agent_disabled");
   agent.disabledCapabilityIds = [];
   assert.equal(checkAgentSkill(context(), "todo-operations").allowed, true);
@@ -182,12 +182,7 @@ export async function runTodoToolTests(root: string): Promise<void> {
   assert.equal((await store.readOnlySnapshot()).records.find(record => record.id === "existing")!.dueDate, "2026-10-22");
   assert.equal((await receipts.listUiViews()).find(row => row.toolCallId === conflict.toolCallId)?.effectState, "authorized");
 
-  nextIntent("保存前关闭能力");
   const beforeRevoke = await source();
-  confirmationEffect = () => { agent.disabledCapabilityIds = ["todos"]; };
-  const revoked = await call("todo_add", { title: "Must not write after revoke" });
-  confirmationEffect = undefined; agent.disabledCapabilityIds = [];
-  assert.equal(revoked.status, "failed"); assert.match(revoked.reason, /agent_capability_agent_disabled/); assert.equal(await source(), beforeRevoke);
   nextIntent("保存前改为只读");
   confirmationEffect = () => { access = { ...access, permission: "read-only" }; };
   const readOnly = await call("todo_add", { title: "Must not write in read-only" });

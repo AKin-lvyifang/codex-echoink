@@ -56,7 +56,8 @@ export function runAgentIdentityFieldsTests(document: Document): void {
   assert.equal(normalizedExpert.position, "思考伙伴");
   assert.equal(normalizedExpert.positionDescription, expert.expert!.summary);
   assert.deepEqual(normalizeAgentRegistry(experts), experts);
-  assert.equal(hasAgentCapabilityGrant(experts.agents.find(agent => agent.id === writer.id)!, "web-search"), false);
+  // 2026-11-25: web search is built into every non-expert Agent; the migrated opt-out stays in data but no longer narrows it.
+  assert.equal(hasAgentCapabilityGrant(experts.agents.find(agent => agent.id === writer.id)!, "web-search"), true);
   assert.equal(hasAgentCapabilityGrant(experts.agents.find(agent => agent.id === "researcher")!, "web-search"), true);
   assert.deepEqual(experts.agents.slice(0, 2).map(agent => agent.disabledCapabilityIds), [["web-search"], ["finance"]]);
   assert.deepEqual(normalizedExpert.capabilityIds, ["journal", "knowledge", "finance"]);

@@ -2,7 +2,7 @@ import { createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-
 import { executeStagedMaintenanceFixture } from "./maintenance-staged-fixture";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   validateKnowledgeMaintenanceCandidateSources
 } from "../knowledge-base/knowledge-maintenance-protocol";
 import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
+import { maintenanceFailureText } from "../knowledge-base/maintenance-user-copy";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import {
@@ -25,6 +26,7 @@ import { setRequestUrlForTests } from "./obsidian-shim";
 const TARGET = "wiki/AI.md";
 const AGENT_LINK = "[[wiki/Agent.md|智能体]]";
 const VAULT_ID = "source-characterization-vault";
+const PERCENT_SOURCE = "raw/前1%目录.md";
 const RAW = {
   "raw/old-a.md": "# 以前的资料 A\n智能体会调用工具。\n",
   "raw/old-b.md": "# 以前的资料 B\n保留旧资料的出处。\n",
@@ -103,6 +105,8 @@ export async function runKnowledgeLinkSourceCharacterizationTests(): Promise<voi
       console.log(JSON.stringify({ scenario: scenario.id, directValidation, completion: scenario.rejection ?? "accepted",
         ...production, elapsedMs: Math.round(performance.now() - started) }));
     }
+    await runPercentSourceWriteAndResume(path.join(root, "percent-resume"));
+    assertPercentSourceRoundTrips();
     assert.equal(networkAttempts, 0);
     console.log(`PASS: ${SCENARIOS.length} characterization scenarios; elapsedMs=${Math.round(performance.now() - startedAt)}; networkAttempts=0.`);
     console.log("Boundary: prior sources survive only with server-authenticated expectedTarget baseline; adopted evidence contains this batch's sources only.");
@@ -113,6 +117,100 @@ export async function runKnowledgeLinkSourceCharacterizationTests(): Promise<voi
     restoreRequestUrl();
     await rm(root, { recursive: true, force: true });
   }
+}
+
+function assertPercentSourceRoundTrips(): void {
+  const literal = "raw/同名%20资料.md";
+  const space = "raw/同名 资料.md";
+  const binding = (relativePath: string) => ({ relativePath, contentSha256: sha256(relativePath) });
+  const marker = (source: ReturnType<typeof binding>) => `<!-- echoink-source: ${JSON.stringify({ path: source.relativePath, revision: `sha256:${source.contentSha256}` })} -->`;
+  const percent = binding(PERCENT_SOURCE);
+  const unencoded = binding(space);
+  const encoded = binding(literal);
+  const base = { targetPath: TARGET, content: "# 合成知识页" };
+  for (const { selectedSources, content, expected } of [
+    { selectedSources: [percent], content: base.content, expected: [percent] },
+    { selectedSources: [encoded, unencoded], content: `${base.content}\n[[${literal}|来源]]`, expected: [encoded] },
+    { selectedSources: [unencoded], content: `${base.content}\n[来源](${literal})`, expected: [unencoded] }
+  ]) {
+    const input = { ...base, content, selectedSources };
+    const completed = completeKnowledgeMaintenanceCandidateSources(input);
+    assert.deepEqual(validateKnowledgeMaintenanceCandidateSources({ ...input, content: completed }), expected.map(source => ({ relativePath: source.relativePath, revision: `sha256:${source.contentSha256}` })));
+  }
+  for (const [code, input] of [
+    ["knowledge_candidate_source_missing", { ...base, selectedSources: [percent], content: `${base.content}\n${marker(percent)}` }],
+    ["knowledge_candidate_source_mismatch", { ...base, selectedSources: [percent, unencoded], content: `[[${space}]]\n${marker(unencoded)}\n${marker(percent)}` }]
+  ] as const) {
+    assert.throws(() => validateKnowledgeMaintenanceCandidateSources(input), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.ok(error.message.startsWith(`${code}:`));
+      assert.ok(error.message.includes(PERCENT_SOURCE));
+      assert.ok(!error.message.includes(space));
+      assert.equal(maintenanceFailureText(error.message, TARGET), maintenanceFailureText(code, TARGET));
+      return true;
+    });
+  }
+}
+
+async function runPercentSourceWriteAndResume(root: string): Promise<void> {
+  const vault = path.join(root, "vault"), privateRoot = path.join(root, "private");
+  const fixture = await nativeJournalFixture(vault);
+  const ordinary = "raw/普通资料.md";
+  const written = "wiki/先写入.md";
+  const pending = "wiki/百分号知识页.md";
+  const sourcePaths = [ordinary, PERCENT_SOURCE];
+  await mkdir(path.join(vault, "wiki"), { recursive: true });
+  await fixture.write(ordinary, "# 普通资料\n\n合成材料说明如何记录实验过程。\n");
+  await fixture.write(PERCENT_SOURCE, "# 百分号资料\n\n合成材料说明如何核对实验结论。\n");
+  const adapter = new ObsidianVaultDomainAdapter(fixture.app, VAULT_ID, vault);
+  const domain = new VaultDomainService(adapter, { allowMissingParentDirectories: true });
+  const writes: string[] = [];
+  const createFile = adapter.createFile.bind(adapter);
+  adapter.createFile = async (...args) => { await createFile(...args); writes.push(args[0].relativePath); };
+  const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: privateRoot, vaultId: VAULT_ID, userId: "fixture", deviceId: "fixture", domainService: domain, dateKey: () => "2026-10-15" });
+  await port.initialize();
+  const interruption = "synthetic interruption before the second page's write-ahead log";
+  const createWal = port.state.createWal.bind(port.state);
+  port.state.createWal = async wal => {
+    if (wal.actions.some(entry => entry.action.targetPath === pending)) {
+      port.state.createWal = createWal;
+      throw new Error(interruption);
+    }
+    return createWal(wal);
+  };
+  const input = {
+    vaultId: VAULT_ID, conversationId: "percent-resume", piSessionId: "percent-resume", productRunId: "percent-resume", toolCallId: "percent-write", mode: "maintain" as const, request: "", sourcePaths,
+    preferenceSnapshot: { profileVersion: "echoink-knowledge-preference-profile-v1" as const, state: "default" as const, revision: `sha256:${"a".repeat(64)}` }
+  };
+  const actions = [
+    { targetPath: written, content: "# 先写入\n\n记录实验的操作过程。\n\n## 要点\n\n先明确记录的范围。\n" },
+    { targetPath: pending, content: "# 百分号知识页\n\n核对实验的结论与过程。\n\n## 要点\n\n回看记录并检验结论。\n" }
+  ].map(action => ({ ...action, expectedTarget: { kind: "missing" as const } }));
+  const first = await executeStagedMaintenanceFixture(port, domain, { ...input, candidateActions: actions }, [[ordinary], sourcePaths]);
+  assert.equal(first.status, "failed", first.message);
+  assert.ok(first.message.includes(interruption), first.message);
+  assert.deepEqual(writes, [written]);
+  await assert.rejects(readFile(path.join(vault, pending)), { code: "ENOENT" });
+  const firstBytes = await readFile(path.join(vault, written), "utf8");
+  const [checkpoint] = await readPrivateMaintenanceRecords(privateRoot, { vaultId: VAULT_ID });
+  const draft = checkpoint.p1?.drafts["page-1"];
+  assert.ok(draft);
+  assert.deepEqual(new Set(sourceMarkers(draft.content).map(marker => marker.path)), new Set(sourcePaths));
+
+  const resumed = await port.execute({ ...input, toolCallId: "percent-resume", p1: { stage: "resume" } });
+  assert.equal(resumed.status, "completed", resumed.message);
+  assert.equal(resumed.maintenanceResult?.status, "completed");
+  const readback = await readFile(path.join(vault, pending), "utf8");
+  assert.equal(readback, draft.content);
+  assert.ok(readback.includes(`[[${PERCENT_SOURCE}|`));
+  assert.equal(await readFile(path.join(vault, written), "utf8"), firstBytes);
+  const wals = (await port.state.listRecoverableWals(VAULT_ID)).filter(wal => wal.actions.some(entry => entry.action.targetPath === pending || entry.action.targetPath === written));
+  assert.equal(wals.length, 2);
+  assert.equal(wals.find(wal => wal.actions[0].action.targetPath === pending)?.authorization.contract.toolCallId, draft.toolCallId);
+  assert.ok(wals.every(wal => wal.status === "completed" && wal.actions[0].status === "completed"));
+  assert.deepEqual(writes.filter(relative => relative === written || relative === pending), [written, pending]);
+  assert.equal(fixture.providerCalls(), 0);
+  console.log("PASS: percent source write and resume reused the persisted draft and did not rewrite the committed page.");
 }
 
 async function runProductionScenario(root: string, scenario: Scenario, before: string, candidate: string, _completed?: string) {

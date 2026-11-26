@@ -1,5 +1,4 @@
 import { actionFailureText } from "../core/error-copy";
-import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ItemView, Notice, type EventRef, type WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginPagination, disposeOriginControls } from "../settings/origin-controls";
@@ -9,7 +8,8 @@ import { EnglishExpressionBrowser } from "../english-diary/expression-view";
 import { pathsOverlap } from "../english-diary/expression-search";
 import type { SavedDiaryEntry } from "../english-diary/types";
 import { ForegroundView } from "../ui/foreground-view";
-import { workbenchModuleOwner } from "./module-navigation";
+import { renderModuleOwnerAction, workbenchModuleOwner } from "./module-navigation";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "./module-actions";
 import { loadEnglishDiaryPageData, type EnglishDiaryPageData } from "./english-diary-page-data";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 
@@ -167,7 +167,6 @@ export class EnglishDiaryPageView extends ItemView {
         this.openPage(next); this.field(`tab-${next}`).focus();
       };
     }
-    this.button(toolbar, this.t("新建英文日记", "New English diary"), () => this.prepareToday(), "is-secondary").dataset.englishDiary = "new";
     for (const page of ["diary", "expressions"] as const) inner.createEl("section", { cls: `english-page-${page}`, attr: { "data-english-diary": page, role: "tabpanel", id: `${this.pageId}-${page}`, "aria-labelledby": `${this.pageId}-${page}-tab` } });
     this.field("activity").addEventListener("focusout", () => queueMicrotask(() => { if (this.heatmapPending && !this.closed) this.renderHeatmap(); }));
     this.renderHeader(); this.showPage();
@@ -184,13 +183,17 @@ export class EnglishDiaryPageView extends ItemView {
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
       back.setAttribute("aria-label", this.t("返回工作台", "Back to workbench")); back.dataset.echoinkWorkbenchBack = ""; setIcon(back, "arrow-left"); title.createEl("h1").dataset.echoinkModuleTitle = "";
       header.createSpan({ cls: "english-page-note", attr: { "data-english-diary": "review-reason" } });
-      this.button(header, "", () => this.reviewExpressions(), "is-primary").dataset.englishDiary = "owner";
+      const actions = header.createDiv({ cls: "echoink-module-header-actions" });
+      this.button(actions, "", () => this.reviewExpressions(), "is-secondary").dataset.englishDiary = "owner";
+      this.button(actions, "", () => this.prepareToday(), "is-primary").dataset.englishDiary = "new";
     }
     header.querySelector("h1")!.setText(this.getDisplayText());
     header.querySelector(".is-icon")?.setAttribute("aria-label", this.t("返回工作台", "Back to workbench"));
     const owner = workbenchModuleOwner(this.plugin, "english-diary");
     const review = this.field("owner") as HTMLButtonElement;
-    review.setText(moduleOwnerLabel(this.plugin, "english-diary"));
+    renderModuleOwnerAction(review, owner, moduleOwnerActionLabel("english-diary", { english: this.plugin.settings.settingsLanguage === "en" }));
+    const create = this.field("new") as HTMLButtonElement;
+    create.setText(this.t("生成英文日记", "Generate English diary")); create.disabled = !this.plugin.settings.englishDiary.enabled;
     review.disabled = !!owner && (!this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled);
     this.reviewTooltip = attachNativeTooltip(review, !this.snapshot?.expressions.length ? this.t("还没有可复习的表达", "No expressions to review yet") : "");
     const reason = this.field("review-reason");
@@ -199,8 +202,6 @@ export class EnglishDiaryPageView extends ItemView {
     if (this.contentEl.querySelector('[data-english-diary="tab-diary"]')) {
       this.field("tab-diary").parentElement?.setAttribute("aria-label", this.t("英文日记内容", "English diary content"));
       this.field("tab-diary").setText(this.t("日记", "Diaries")); this.field("tab-expressions").setText(this.t("表达库", "Expressions"));
-      this.field("new").setText(this.t("新建英文日记", "New English diary"));
-      (this.field("new") as HTMLButtonElement).disabled = !this.plugin.settings.englishDiary.enabled;
     }
   }
   private renderMetrics(): void {
@@ -271,7 +272,6 @@ export class EnglishDiaryPageView extends ItemView {
       const tab = this.field(`tab-${page}`); tab.setAttribute("aria-selected", String(page === this.page)); tab.tabIndex = page === this.page ? 0 : -1;
     }
     const tabs = this.field("tab-diary").parentElement!; tabs.dataset.selected = this.page;
-    this.field("new").hidden = this.page !== "diary";
     this.syncActive();
   }
   private syncActive(): void { setActivityHeatmapsActive(this.contentEl, this.active()); this.expressions?.setActive(this.active() && this.page === "expressions"); }
@@ -282,7 +282,7 @@ export class EnglishDiaryPageView extends ItemView {
     const settings = this.plugin.settings.englishDiary;
     const paths = [...new Set([settings.expressionDirectory, ...(settings.legacyExpressionDirectories ?? [])].filter(Boolean))];
     if (!paths.length) throw new Error(this.t("尚未设置表达库位置。请在英文日记设置中选择位置。", "No expression library location is set. Choose one in English diary settings."));
-    const text = this.t("用最近收录的表达考考我。只读取以下表达库范围，不读取原始日记，也不生成或改写英文日记：", "Quiz me on recently saved expressions. Read only these expression library locations; do not read original diaries or generate or rewrite English diaries:") + "\n" + paths.map(path => `- ${path}`).join("\n");
+    const text = moduleOwnerActionPrompt("english-diary", { english: this.plugin.settings.settingsLanguage === "en" }) + this.t("。只读取以下表达库范围，不读取原始日记，也不生成或改写英文日记：", " Read only these expression library locations; do not read original diaries or generate or rewrite English diaries:") + "\n" + paths.map(path => `- ${path}`).join("\n");
     if (startNow) { await this.plugin.startModulePromptTask("english-diary", text); return; }
     const opened = await this.plugin.openAgentTaskList(owner.id, text);
     if (!opened) new Notice(this.t("已打开任务列表，原有草稿已保留", "Task list opened; the existing draft was kept"));

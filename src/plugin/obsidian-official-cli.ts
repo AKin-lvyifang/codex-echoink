@@ -47,27 +47,61 @@ export async function findObsidianCliExecutable(): Promise<string | null> {
   }
   return null;
 }
-export function createOfficialObsidianCliTransport(vaultRootPath: string): ObsidianCliTransport {
+export function createOfficialObsidianCliTransport(vaultRootPath: string, options: {
+  findExecutable?: typeof findObsidianCliExecutable;
+  executeFile?: typeof execFile;
+  timeoutMs?: number;
+} = {}): ObsidianCliTransport {
   return {
     async run(argv, signal) {
-      if (signal?.aborted) return { status: "cancelled", started: false, output: "", reason: "obsidian_cli_cancelled" };
-      const executable = await findObsidianCliExecutable();
-      if (!executable) return { status: "unavailable", started: false, output: "", reason: "Obsidian CLI binary missing. Install Obsidian 1.12.7+ and enable Settings > General > Advanced > Command line interface." };
       return await new Promise<ObsidianCliProcessResult>((resolve) => {
+        let child: ReturnType<typeof execFile> | undefined;
         let started = false;
-        // Public CLI selects the Vault containing cwd. The caller verifies `vault info=path`
-        // before every request. A model cannot provide cwd, a program, or vault=.
-        const child = execFile(executable, [...argv], {
-          cwd: vaultRootPath, shell: false, windowsHide: true, timeout: 20_000,
-          maxBuffer: 32_000, encoding: "utf8", ...(signal ? { signal } : {})
-        }, (error, stdout, stderr) => {
-          const output = stdout.slice(0, 32_000);
-          if (signal?.aborted) return resolve({ status: "cancelled", started, output, reason: "obsidian_cli_cancelled" });
-          if (error) return resolve({ status: error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "truncated" : "failed", started, output, reason: error.killed ? "obsidian_cli_timeout" : "obsidian_cli_process_failed" });
-          if (obsidianCliOutputIsError(argv[0] ?? "", stdout, stderr)) return resolve({ status: "failed", started, output, reason: "obsidian_cli_reported_error" });
-          resolve({ status: "completed", started, output });
-        });
-        child.once("spawn", () => { started = true; });
+        let settled = false;
+        const finish = (result: ObsidianCliProcessResult) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          signal?.removeEventListener("abort", cancel);
+          resolve(result);
+        };
+        const stop = (status: "failed" | "cancelled", reason: string) => {
+          finish({ status, started, output: "", reason });
+          // Return even if the child never closes or the execFile callback never runs.
+          try { child?.kill("SIGKILL"); } catch { /* The process may have already exited. */ }
+          child?.stdout?.destroy();
+          child?.stderr?.destroy();
+        };
+        const cancel = () => stop("cancelled", "obsidian_cli_cancelled");
+        const timer = window.setTimeout(() => stop("failed", "obsidian_cli_timeout"), options.timeoutMs ?? 20_000);
+        if (signal?.aborted) { cancel(); return; }
+        signal?.addEventListener("abort", cancel, { once: true });
+
+        void (async () => {
+          try {
+            const executable = await (options.findExecutable ?? findObsidianCliExecutable)();
+            if (settled) return;
+            if (!executable) {
+              finish({ status: "unavailable", started, output: "", reason: "Obsidian CLI binary missing. Install Obsidian 1.12.7+ and enable Settings > General > Advanced > Command line interface." });
+              return;
+            }
+            // Public CLI selects the Vault containing cwd, which the caller verifies.
+            child = (options.executeFile ?? execFile)(executable, [...argv], {
+              cwd: vaultRootPath, shell: false, windowsHide: true, maxBuffer: 32_000, encoding: "utf8"
+            }, (error, stdout, stderr) => {
+              if (settled) return;
+              const output = stdout.slice(0, 32_000);
+              if (error) {
+                finish({ status: error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "truncated" : "failed", started, output, reason: "obsidian_cli_process_failed" });
+              } else if (obsidianCliOutputIsError(argv[0] ?? "", stdout, stderr)) {
+                finish({ status: "failed", started, output, reason: "obsidian_cli_reported_error" });
+              } else finish({ status: "completed", started, output });
+            });
+            child.once("spawn", () => { started = true; });
+          } catch {
+            finish({ status: "failed", started, output: "", reason: "obsidian_cli_process_failed" });
+          }
+        })();
       });
     }
   };

@@ -1,3 +1,4 @@
+import { WorkbenchNotices } from "../membership/workbench-notices";
 import { settingsErrorText } from "../core/error-copy";
 import { ReleaseUpdateController } from "../settings/release-update";
 import { isEmptyEchoInkPluginData } from "../settings/plugin-data";
@@ -54,6 +55,7 @@ export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
   readonly reportLogin = new RunReportLogin();
   readonly releaseUpdate = new ReleaseUpdateController();
+  workbenchNotices?: WorkbenchNotices;
   store!: MobileStore;
   settings!: MobileSettings;
   runtime!: MobileRuntime;
@@ -134,6 +136,8 @@ export default class EchoInkMobilePlugin extends Plugin {
       await this.services.initialize();
       if (migratedBindings || migratedTheme || migratedToolCalling || migratedOwners) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
+      this.workbenchNotices = new WorkbenchNotices(this.accountService, this.manifest.version);
+      this.register(() => this.workbenchNotices?.dispose());
       this.register(this.accountService.onSignInReturned(() => this.reportLogin.returned()));
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       this.startDecisionClient();
@@ -502,7 +506,7 @@ export class EchoInkIPhoneView extends ItemView {
     this.ui = new IPhoneWorkbench(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
       reloadTaskFile: () => this.plugin.reloadTaskFile(),
-      releaseUpdate: this.plugin.releaseUpdate,
+      releaseUpdate: this.plugin.releaseUpdate, workbenchNotices: this.plugin.workbenchNotices,
       agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
       accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
       modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
@@ -552,7 +556,7 @@ export class EchoInkIPadView extends ItemView {
     const host: IPadWorkbenchHost = {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
       reloadTaskFile: () => this.plugin.reloadTaskFile(),
-      releaseUpdate: this.plugin.releaseUpdate,
+      releaseUpdate: this.plugin.releaseUpdate, workbenchNotices: this.plugin.workbenchNotices,
       agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
       accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
       modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,

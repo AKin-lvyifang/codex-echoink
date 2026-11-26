@@ -2,6 +2,7 @@ import type { AgentDefinition, AgentModuleId } from "../../agents/types";
 import type { EchoInkResource } from "../../resources/types";
 import type { ExpertSubmissionService } from "../../experts/submission-service";
 import type { CodexForObsidianSettings } from "../../settings/settings";
+import type { App } from "obsidian";
 
 export interface AgentEditorSaveBaseline {
   agent: AgentDefinition;
@@ -16,6 +17,8 @@ export interface AgentEditorCreationOptions {
 /** The editor only edits its draft; the plugin owns durable Agent/task changes. */
 export interface AgentEditorHost {
   readonly settings: CodexForObsidianSettings;
+  /** Lets an open model list own Escape, so it does not also close the surrounding Settings window. */
+  readonly app?: Pick<App, "scope" | "keymap">;
   /** Stable plugin identity for data-only form drafts across View instances. */
   readonly draftCacheKey: object;
   /** Settings supplies its own destination; omitted for the existing sidebar. */

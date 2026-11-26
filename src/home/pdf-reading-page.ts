@@ -5,7 +5,8 @@ import { createOriginButton, createOriginPagination, disposeOriginControls } fro
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { ForegroundView } from "../ui/foreground-view";
 import type { PdfJob, PdfNavigationArtifact, PdfNavigationData, PdfNavigationEntry } from "../pdf-reading/types";
-import { workbenchModuleOwner } from "./module-navigation";
+import { prefillWorkbenchModule, renderModuleOwnerAction, workbenchModuleOwner } from "./module-navigation";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "./module-actions";
 import { PdfReadingUploadModal, pdfFileSize } from "./pdf-reading-upload-modal";
 
 export const PDF_READING_PAGE_VIEW_TYPE = "echoink-pdf-reading-page";
@@ -91,6 +92,7 @@ export class PdfReadingPageView extends ItemView {
       }
       const signature = JSON.stringify([this.snapshot, this.settingsSignature]);
       if (signature !== this.renderedSignature) { this.renderedSignature = signature; this.renderHistory(); this.renderDetail(); }
+      this.renderHeader();
     } catch (error) {
       if (!this.active() || generation !== this.generation) return;
       const status = this.field("status"); this.reset(status);
@@ -133,13 +135,27 @@ export class PdfReadingPageView extends ItemView {
       const title = header.createDiv({ cls: "pdf-page-title" });
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
       setIcon(back, "arrow-left"); back.dataset.echoinkWorkbenchBack = ""; title.createEl("h1").dataset.echoinkModuleTitle = "";
-      const upload = this.button(header, "", () => { if (!workbenchModuleOwner(this.plugin, "pdf-reading")) this.plugin.openModuleOwnerPicker("pdf-reading", async () => { new PdfReadingUploadModal(this.plugin, upload).open(); }); else new PdfReadingUploadModal(this.plugin, upload).open(); }, "is-primary");
+      const actions = header.createDiv({ cls: "echoink-module-header-actions" });
+      this.button(actions, "", () => this.continueReading(), "").dataset.pdfPage = "owner";
+      const upload = this.button(actions, "", () => { if (!workbenchModuleOwner(this.plugin, "pdf-reading")) this.plugin.openModuleOwnerPicker("pdf-reading", async () => { new PdfReadingUploadModal(this.plugin, upload).open(); }); else new PdfReadingUploadModal(this.plugin, upload).open(); }, "is-primary");
       upload.dataset.pdfPage = "upload";
     }
     header.querySelector("h1")!.setText(this.getDisplayText());
     header.querySelector(".is-icon")!.setAttribute("aria-label", this.t("返回工作台", "Back to workbench"));
     const owner = workbenchModuleOwner(this.plugin, "pdf-reading");
-    this.field("upload").setText(owner ? this.t(`上传 PDF 交给 ${owner.name}`, `Upload PDF for ${owner.name}`) : this.t("指定负责人", "Assign owner"));
+    this.field("upload").setText(this.t("上传 PDF", "Upload PDF"));
+    const resume = this.field("owner") as HTMLButtonElement;
+    renderModuleOwnerAction(resume, owner, moduleOwnerActionLabel("pdf-reading", { english: this.plugin.settings.settingsLanguage === "en" }));
+    resume.disabled = !this.continueTarget();
+  }
+  /** 继续精读当前选中的 PDF；未选中时取最近一份。 */
+  private continueTarget(): PdfNavigationEntry | undefined {
+    const entries = this.snapshot?.entries ?? [];
+    return entries.find(entry => entry.job.id === this.selectedId) ?? entries[0];
+  }
+  private async continueReading(): Promise<void> {
+    const target = this.continueTarget(); if (!target) return;
+    await prefillWorkbenchModule(this.plugin, "pdf-reading", moduleOwnerActionPrompt("pdf-reading", { english: this.plugin.settings.settingsLanguage === "en", pdfName: target.job.name }));
   }
   private state(entry: PdfNavigationEntry): string {
     const job = entry.job;

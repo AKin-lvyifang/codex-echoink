@@ -1,6 +1,6 @@
 import { runWorkbenchDismissalTests } from "./workbench-dismissals";
 import assert from "node:assert/strict";
-import { calculateWorkbenchSignals, latestFailedPdfRequests, nextWorkbenchRefreshAt, workbenchCalendarOrdinal, type WorkbenchFacts } from "../home/workbench-signals";
+import { calculateWorkbenchSignals, latestFailedPdfRequests, nextWorkbenchRefreshAt, workbenchCalendarOrdinal, workbenchSignalAction, type WorkbenchFacts } from "../home/workbench-signals";
 import { EMPTY_LIFESTYLE_DATA, type FinanceEntry, type LifestyleData } from "../lifestyle/store-core";
 import { AGENT_MODULE_IDS } from "../agents/types";
 import type { ParsedTodoRecord } from "../home/todo-markdown";
@@ -105,5 +105,8 @@ export async function runWorkbenchSignalsTests(): Promise<void> {
   assert.ok(!ids(systems).includes(15), "same-domain busy task suppresses duplicate system handoff");
   systems.tasks = []; systems.modules = [];
   assert.ok(!ids(systems).includes(15), "disabled knowledge module never emits its system reminder");
+  const signalIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15] as const;
+  assert.deepEqual(signalIds.map(id => workbenchSignalAction(id)), ["梳理优先级", "重排待办", "查看预算", "写日记", "生成英文稿", "整理 Inbox", "整理资料", "继续处理", "开始复盘", "补写日记", "归类账目", "导入账单", "补充关联", "梳理体系"], "each suggestion names its concrete action");
+  assert.ok(signalIds.every(id => workbenchSignalAction(id, true) && !/交给|Hand/u.test(workbenchSignalAction(id, true))));
   console.log("Workbench signal rules: 14 signals, transitions, strict thresholds, local dates, PRO/module eligibility and task suppression passed");
 }

@@ -1,3 +1,4 @@
+import { giftTriggerLabel, mountWorkbenchGifts } from "../workbench-gifts";
 import { saveWorkbenchDismissal } from "../../home/workbench-dismissals";
 import { settingsErrorText } from "../../core/error-copy";
 import { getModuleOwner } from "../../agents/registry";
@@ -98,7 +99,8 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const date = el(ctx.document, "div", "ip-home-date"); copy.append(el(ctx.document, "h1", "", "工作台"), date);
   const newTask = iphoneButton(ctx.document, "新任务", () => { void openNewTask(ctx, GENERAL_ASSISTANT_ID).catch(error => ctx.error(error)); }, "is-primary", "plus");
   newTask.disabled = !!ctx.host.store.unavailableReason;
-  header.append(copy, shellIconButton(ctx.document, "EchoInk 设置", "settings", () => { void ctx.host.openLegacy("settings").catch(error => ctx.error(error)); }), newTask);
+  const gift = ctx.host.workbenchNotices && shellIconButton(ctx.document, giftTriggerLabel(ctx.host.settings().settingsLanguage), "gift", () => {});
+  header.append(copy, ...(gift ? [gift] : []), shellIconButton(ctx.document, "EchoInk 设置", "settings", () => { void ctx.host.openLegacy("settings").catch(error => ctx.error(error)); }), newTask);
   const strip = el(ctx.document, "div", "ip-strip-slot"), navigation = el(ctx.document, "nav", "ip-module-nav"); navigation.setAttribute("aria-label", "模块");
   for (const module of IPHONE_MODULES.slice(0, 5)) {
     const button = el(ctx.document, "button", "ip-module-button"); button.type = "button";
@@ -112,6 +114,10 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const topTasks = el(ctx.document, "div", "ip-task-groups"), signals = el(ctx.document, "div", "ip-signals"), bottomTasks = el(ctx.document, "div", "ip-completed-group"), todos = el(ctx.document, "div", "ip-home-todos");
   const readError = el(ctx.document, "div", "ip-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
   content.append(header, strip, navigation, releases, companySlot, topTasks, signals, bottomTasks, todos, readError);
+  const giftControl = gift && ctx.host.workbenchNotices && mountWorkbenchGifts(gift, ctx.host.workbenchNotices, {
+    language: () => ctx.host.settings().settingsLanguage, mobileSheet: ctx.shell,
+    visible: () => content.isConnected && !ctx.document.hidden && !content.closest("[hidden], [inert]")
+  });
   if (ctx.host.store.unavailableReason) content.insertBefore(readError, topTasks);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "";
   const questions = new Map<string, ReturnType<typeof createInlineQuestion>>();
@@ -280,7 +286,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
       if (task && iphoneTaskStatus(task) === "running") card.querySelector(".ip-status")?.replaceWith(iphoneStatus(ctx.document, task));
     }
   }, 60_000);
-  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); releaseReminders.dispose(); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
+  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); giftControl?.dispose(); releaseReminders.dispose(); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
 }
 
 export function createAgentPage(ctx: IPhonePageContext, agentId: string): MobileShellPage {

@@ -262,6 +262,9 @@ export class ConversationRunService {
     const submission = this.composerSubmissions.records.get(item.id);
     if (submission) submission.snapshot = cloneQueuedTurnItem(frozen);
     this.lastTurnOptions.set(session.id, frozen.turnOptions);
+    const notices = this.plugin.workbenchNotices;
+    const cloud = frozen.turnOptions.runtimeProviderId === "xiaoecho";
+    if (cloud) notices?.startCloudTurn(session.id);
     const context = this.createHost(state, frozen, onAccepted);
     state.context = context;
     const flight = Promise.resolve().then(async (): Promise<QueuedTurnOutcome> => {
@@ -309,6 +312,7 @@ export class ConversationRunService {
         }
         return outcome;
       } catch (error) {
+        outcome = "failed";
         this.resumeErrors.set(session.id, error instanceof Error ? error.message : String(error));
         throw error;
       } finally {
@@ -336,7 +340,15 @@ export class ConversationRunService {
             new Notice(joinErrorCopy(["任务已结束，但提醒状态未能保存。", "The task ended, but its reminder status was not saved."], NEXT.retryLater, this.plugin.settings.settingsLanguage));
           });
         }
+        if (cloud) void notices?.finishCloudTurn(session.id);
         await this.flushSave();
+        if (outcome === "failed") notices?.recordTurnError();
+        if (outcome === "completed" && !waiting && !frozen.turnOptions.companyProgrammatic && frozen.piProductRunId && notices) {
+          const messages = session.messages.filter(message => message.runId === frozen.piProductRunId || message.turnId === frozen.piProductRunId);
+          const answered = messages.some(message => message.role === "assistant" && !!message.text.trim());
+          const produced = messages.some(message => !!message.savedNotePath || !!message.workspaceArtifact || message.generationResult?.writeState === "verified");
+          notices.recordCompletion(frozen.piProductRunId, session.id, answered, produced);
+        }
         this.notify(session.id);
         if (frozen.piUserEntryAccepted && !this.disposed) for (const listener of this.settledListeners) {
           try { listener(session.id, outcome, settledTurnStartedAt); } catch (error) { console.error("Turn settlement listener failed", error); }

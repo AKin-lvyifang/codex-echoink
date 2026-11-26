@@ -1,4 +1,5 @@
 import type { MobileJournalSnapshot } from "../../mobile/module-contracts";
+import { moduleOwnerActionPrompt } from "../../home/module-actions";
 import { BUILT_IN_JOURNAL_TEMPLATES } from "../../home/home-workbench-model";
 import type { HomeJournalTemplateChoice } from "../../home/home-workbench-data";
 import { journalMonthSelection, journalPageEntries } from "../../home/journal-stats";
@@ -11,7 +12,7 @@ import { IPhoneModulePage, moduleDate, moduleIconButton, moduleParseDate, module
 
 export async function openIPhoneJournal(ctx: IPhonePageContext): Promise<void> {
   const id = "iphone-module-journal"; if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
-  const view = new IPhoneModulePage(ctx, id, "日记", "journal", "聊聊今天"), api = ctx.host.services.modules.journal;
+  const view = new IPhoneModulePage(ctx, id, "日记", "journal", moduleOwnerActionPrompt("journal", { english: ctx.host.settings().settingsLanguage === "en" })), api = ctx.host.services.modules.journal;
   let snapshot: MobileJournalSnapshot | undefined, month = new Date(new Date().getFullYear(), new Date().getMonth(), 1), selected = moduleDate(new Date()), mode = "month", page = 1, revision = 0;
   const summaries = new Map<string, { mtime: number; text: string }>();
   const render = () => {

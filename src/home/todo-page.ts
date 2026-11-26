@@ -1,5 +1,4 @@
 import { NEXT, failureText, type ErrorCopy, actionFailureText } from "../core/error-copy";
-import { moduleOwnerLabel } from "../ui/module-owner-modal";
 export { todoPageRecords } from "./todo-page-model";
 import { projectKey } from "./todo-page-model";
 import { ItemView, Notice, TFolder, type TAbstractFile, type EventRef, type WorkspaceLeaf, setIcon } from "obsidian";
@@ -10,7 +9,8 @@ import { ForegroundView } from "../ui/foreground-view";
 import { confirmModal } from "../ui/modals";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { getTodoProjects, resolveTodoProject, type TodoProject } from "./todo-projects";
-import { prefillWorkbenchModule } from "./module-navigation";
+import { prefillWorkbenchModule, renderModuleOwnerAction, workbenchModuleOwner } from "./module-navigation";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "./module-actions";
 import { todayKey } from "./home-todos";
 import {
   addDays, addMonths, categoryColor, groupTodos, layoutTimed, matchesSmartList, monthGrid, parseDateKey, parseQuickAdd,
@@ -280,7 +280,9 @@ export class TodoPageView extends ItemView {
     }
     const actions = header.createDiv({ cls: "todo-page-actions" });
     this.segments(actions, "view", [["list", this.t("列表", "List"), "list"], ["calendar", this.t("日历", "Calendar"), "calendar"]], this.state.view, value => { this.state.view = value as TodoView; this.state.timelineScroll = null; this.renderData(); });
-    this.button(actions, moduleOwnerLabel(this.plugin, "todos"), () => this.handoff(), "is-primary").dataset.todoPage = "owner";
+    const owner = this.button(actions, "", () => this.handoff()); owner.dataset.todoPage = "owner";
+    renderModuleOwnerAction(owner, workbenchModuleOwner(this.plugin, "todos"), moduleOwnerActionLabel("todos", { english: this.plugin.settings.settingsLanguage === "en" }));
+    this.button(actions, this.t("新建待办", "New to-do"), () => this.focusQuickAdd(), "is-primary").dataset.todoPage = "new";
   }
   private segments(parent: HTMLElement, name: string, options: [string, string, string?][], value: string, change: (value: string) => void): void {
     const group = parent.createDiv({ cls: "todo-segments", attr: { role: "tablist", "data-segment": name } });
@@ -292,11 +294,18 @@ export class TodoPageView extends ItemView {
     }
   }
   private async handoff(): Promise<void> {
-    const prompt = this.t("帮我把今天和本周的待办排个顺序", "Help me prioritize my to-dos for today and this week");
+    const prompt = moduleOwnerActionPrompt("todos", { english: this.plugin.settings.settingsLanguage === "en" });
     const filter = this.state.filter;
     const scope = filter.kind === "project" ? this.t(`项目：${this.projects.find(item => `path:${item.path}` === filter.key)?.label ?? filter.key.slice(5)}`, `Project: ${filter.key.slice(5)}`)
       : filter.kind === "category" ? this.t(`分类：${filter.name}`, `Category: ${filter.name}`) : "";
-    await prefillWorkbenchModule(this.plugin, "todos", scope ? `${prompt}（${scope}）` : prompt);
+    await prefillWorkbenchModule(this.plugin, "todos", !scope ? prompt : this.plugin.settings.settingsLanguage === "en" ? `${prompt.replace(/\.$/u, "")} (${scope}).` : `${prompt}（${scope}）`);
+  }
+
+  /** 新建待办沿用页面里的快速添加输入框，不另开表单。 */
+  private focusQuickAdd(): void {
+    const input = this.field("quick").querySelector<HTMLInputElement>("input.todo-quick-input");
+    if (!input) return;
+    input.scrollIntoView({ block: "nearest" }); input.focus();
   }
 
   /* ---------- 快速添加 ---------- */

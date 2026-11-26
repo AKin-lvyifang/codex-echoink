@@ -70,13 +70,13 @@ export function validateKnowledgeMaintenanceCandidateSources(input: Readonly<{
   const baseline = baselineSources(input.baselineContent, targetPath, host);
   const links = readableSourceLinks(input.content, targetPath, host, new Set([...allowed.keys(), ...baseline.links]));
   const markers = extractMachineSourceMarkers(input.content, host);
+  const missingLinks = [...markers.keys()].filter(relativePath => !links.has(relativePath));
+  const affectedPaths = missingLinks.length ? `: ${JSON.stringify(missingLinks)}` : "";
   if (links.size === 0 || markers.size === 0) {
-    throw new Error("knowledge_candidate_source_missing");
+    throw new Error(`knowledge_candidate_source_missing${affectedPaths}`);
   }
-  if (
-    [...markers.keys()].some((relativePath) => !links.has(relativePath))
-  ) {
-    throw new Error("knowledge_candidate_source_mismatch");
+  if (missingLinks.length) {
+    throw new Error(`knowledge_candidate_source_mismatch${affectedPaths}`);
   }
   const evidence: KnowledgeMaintenanceSourceEvidence[] = [];
   for (const relativePath of [...links].sort((left, right) =>
@@ -105,10 +105,6 @@ function baselineSources(content: string | undefined, targetPath: string, host: 
   const markers = extractMachineSourceMarkers(content ?? "", host);
   const links = readableSourceLinks(content ?? "", targetPath, host, new Set(markers.keys()));
   return { links, markers };
-}
-
-function readableSourceLinks(content: string, targetPath: string, host: KnowledgeMaintenanceSourcesHost, allowed: ReadonlySet<string>): Set<string> {
-  return new Set([...extractReadableRawLinks(content, targetPath, host, allowed), ...extractReadableRawLinks(content, targetPath, host)]);
 }
 
 export function extractMachineSourceMarkers(content: string, host: KnowledgeMaintenanceSourcesHost): Map<string, string> {
@@ -150,11 +146,11 @@ export function extractMachineSourceMarkers(content: string, host: KnowledgeMain
   return markers;
 }
 
-function extractReadableRawLinks(
+function readableSourceLinks(
   content: string,
   knowledgePath: string,
   host: KnowledgeMaintenanceSourcesHost,
-  allowed?: ReadonlySet<string>
+  allowed: ReadonlySet<string>
 ): Set<string> {
   const links = new Set<string>();
   for (const match of content.matchAll(
@@ -173,14 +169,23 @@ function extractReadableRawLinks(
 }
 
 function resolveRawLink(value: string, knowledgePath: string, host: KnowledgeMaintenanceSourcesHost, allowed?: ReadonlySet<string>): string | null {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(value.trim());
-  } catch {
-    return null;
+  const literal = value.trim();
+  if (allowed) {
+    const exact = resolveRawLinkPath(literal, knowledgePath, host, allowed);
+    if (exact) return exact;
   }
-  if (!decoded || /^[a-z]+:\/\//iu.test(decoded)) return null;
-  const withoutAnchor = decoded.split(/[?#]/u, 1)[0]?.replace(/^\/+/, "") ?? "";
+  let decoded = literal;
+  try {
+    decoded = decodeURIComponent(literal);
+  } catch { /* A literal percent sign is valid in a source filename. */ }
+  const decodedMatch = allowed && decoded !== literal ? resolveRawLinkPath(decoded, knowledgePath, host, allowed) : null;
+  // Still surface links to Raw files outside the allowed snapshot for validation.
+  return decodedMatch ?? resolveRawLinkPath(decoded, knowledgePath, host);
+}
+
+function resolveRawLinkPath(value: string, knowledgePath: string, host: KnowledgeMaintenanceSourcesHost, allowed?: ReadonlySet<string>): string | null {
+  if (!value || /^[a-z]+:\/\//iu.test(value)) return null;
+  const withoutAnchor = value.split(/[?#]/u, 1)[0]?.replace(/^\/+/, "") ?? "";
   const candidate = (allowed ? allowed.has(withoutAnchor) : host.rolePath(withoutAnchor).toLowerCase().startsWith("raw/"))
     ? host.path.normalize(withoutAnchor)
     : host.path.normalize(host.path.join(

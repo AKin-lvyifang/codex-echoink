@@ -53,21 +53,20 @@ export function createAgentFormPage(ctx: IPadPageContext, agentId?: string, crea
     input.addEventListener("change", () => { change(input.checked); changed(); refreshSave(); }); parent.append(row); return input;
   };
   const capabilityChecks = new Map<HTMLInputElement, readonly string[]>();
-  const required = (id: string) => !isBasicAgentCapability(id) && [...modules].some(module => moduleCapability(module) === id);
+  // Only experts keep per-module grants; every other Agent has all module work built in.
+  const required = (id: string) => isExpertAgent(draft) && !isBasicAgentCapability(id) && [...modules].some(module => moduleCapability(module) === id);
   const refreshCapabilities = () => { for (const [check, ids] of capabilityChecks) {
     check.checked = ids.length > 0 && ids.every(selected); check.indeterminate = ids.some(selected) && !ids.every(selected);
     check.disabled = !ids.length || ids.some(required); check.parentElement?.classList.toggle("is-required", ids.some(required));
     if (ids.some(required)) {
-      check.setAttribute("aria-description", "负责这个模块，必须能用");
       if (!check.parentElement?.querySelector(".pd-required-lock")) { const lock = el(ctx.document, "span", "pd-required-lock"); lock.setAttribute("aria-hidden", "true"); setIcon(lock, "lock"); check.parentElement?.append(lock); }
-    } else { check.removeAttribute("aria-description"); check.parentElement?.querySelector(".pd-required-lock")?.remove(); }
+    } else check.parentElement?.querySelector(".pd-required-lock")?.remove();
   } };
   const capability = (parent: HTMLElement, ids: string[], name: string, hint?: string) => {
     const input = checkbox(parent, name, ids.length > 0 && ids.every(selected), enabled => {
       for (const id of ids) setAgentCapabilityGrant(draft!, id, enabled);
     }, hint);
     capabilityChecks.set(input, ids);
-    input.parentElement?.addEventListener("click", () => { if (ids.some(required)) new Notice("负责这个模块，必须能用"); });
   };
   const render = () => {
     if (!draft || !snapshot || disposed) return;
@@ -176,11 +175,13 @@ export function createAgentFormPage(ctx: IPadPageContext, agentId?: string, crea
       }
       const capabilities = group("能用的能力"); capabilities.classList.add("pd-agent-capabilities");
       capabilities.parentElement!.querySelector("h3")!.append(ipadButton(ctx.document, "刷新", render, "is-text"));
-      const builtins = el(ctx.document, "div", "pd-agent-capability-section"); builtins.append(el(ctx.document, "h4", "pd-capability-group-label", "模块工具")); const builtinRows = el(ctx.document, "div", "pd-agent-capability-grid");
-      for (const [id, name] of CAPABILITIES) {
-        const legacyDisabled = snapshot.registry.agents.find(agent => agent.id === current.id)?.disabledCapabilityIds?.includes(id);
-        if (!isBasicAgentCapability(id) || (id === "web-search" && isCommunityExpertAgent(current)) || legacyDisabled) capability(builtinRows, [id], name);
-      } builtins.append(builtinRows); capabilities.append(builtins);
+      if (expert) {
+        const builtins = el(ctx.document, "div", "pd-agent-capability-section"); builtins.append(el(ctx.document, "h4", "pd-capability-group-label", "模块工具")); const builtinRows = el(ctx.document, "div", "pd-agent-capability-grid");
+        for (const [id, name] of CAPABILITIES) {
+          const legacyDisabled = snapshot.registry.agents.find(agent => agent.id === current.id)?.disabledCapabilityIds?.includes(id);
+          if (!isBasicAgentCapability(id) || (id === "web-search" && isCommunityExpertAgent(current)) || legacyDisabled) capability(builtinRows, [id], name);
+        } builtins.append(builtinRows); capabilities.append(builtins);
+      }
       const resources = ctx.host.settings().resources, custom = resources.catalog.filter(isLocalUserSkill);
       const mine = el(ctx.document, "div", "pd-agent-capability-section"); mine.append(el(ctx.document, "h4", "pd-capability-group-label", "我的 Skill"));
       for (const resource of custom) {

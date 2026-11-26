@@ -1,4 +1,5 @@
 import { getModuleOwner } from "../agents/registry";
+import { agentModelLabel } from "../agents/agent-model";
 import { WORKBENCH_MODULES } from "../home/module-navigation";
 import { agentRoleGroups } from "../agents/roster-groups";
 import { isAgentHired } from "../agents/persona";
@@ -66,10 +67,11 @@ export class DesktopAgentSettings {
     const list = sections.get("role")!.list;
     for (const agent of agentRoleGroups(this.host.settings.agentRegistry.agents.filter(isAgentHired)).flatMap(group => group.agents)) {
       const list = sections.get(agent.id === GENERAL_ASSISTANT_ID ? "main" : "role")!.list;
-      const main = agent.id === GENERAL_ASSISTANT_ID;
+      const main = agent.id === GENERAL_ASSISTANT_ID, model = agentModelLabel(this.host.settings, agent);
+      const approval = main ? this.text(agent.companyApprovalMode === "assistant" ? "总助审批" : "我来审批", agent.companyApprovalMode === "assistant" ? "Assistant approves" : "I approve") : "";
       const row = createSettingsNavigationRow(list, { title: agent.name,
         description: main ? undefined : agent.position || agentPositionDescription(agent) || undefined,
-        value: main ? this.text(agent.companyApprovalMode === "assistant" ? "总助审批" : "我来审批", agent.companyApprovalMode === "assistant" ? "Assistant approves" : "I approve") : undefined,
+        value: [model, approval].filter(Boolean).join(" · ") || undefined,
         focusKey: `agent:${agent.id}:edit`, onActivate: () => this.open(agent.id) });
       row.addClass("echoink-agent-settings-row");
       const avatar = row.createSpan({ cls: "echoink-agent-settings-avatar", attr: { "aria-hidden": "true" } }); this.avatar(avatar, agent);
@@ -122,7 +124,7 @@ export class DesktopAgentSettings {
     this.clearSummary();
     const host = this.host;
     this.editor = new AgentEditorController({
-      get settings() { return host.settings; }, draftCacheKey: this.host.draftCacheKey,
+      get settings() { return host.settings; }, draftCacheKey: this.host.draftCacheKey, ...(host.app ? { app: host.app } : {}),
       backLabel: this.text("返回 Agent 设置", "Back to Agent settings"), confirmLeave: true,
       loadResources: () => this.host.loadResources(), getCapabilityAvailability: id => this.host.getCapabilityAvailability?.(id) ?? { available: true },
       saveAgent: (agent, modules, baseline) => this.host.saveAgent(agent, modules, baseline), deleteAgent: id => this.host.deleteAgent(id), getDeleteCounts: id => this.host.getDeleteCounts(id),

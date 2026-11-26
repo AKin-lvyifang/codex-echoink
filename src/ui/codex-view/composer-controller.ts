@@ -6,6 +6,7 @@ import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import { attachNativeTooltip } from "../native-tooltip";
 import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
 import { repairXiaoechoModelSelection, subscribeXiaoechoCatalogChanges, xiaoechoSelectableModels } from "../../membership/xiaoecho-catalog-state";
+import { updateComposerPoints } from "./composer-points";
 import { xiaoechoDesktopModelName, xiaoechoTypicalPointsLabel } from "../../membership/xiaoecho-points";
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
 import { Notice, Platform, type App } from "obsidian";
@@ -116,6 +117,10 @@ export interface CodexComposerHost {
   attachments: StoredAttachment[];
   selectedProviderSettingsId: string;
   selectedModel: string;
+  /** Conversation-only effort from its Agent's model; undefined follows the model settings. */
+  selectedReasoning?: ReasoningEffort;
+  /** Set once the person switches model or effort here; it then outranks the Agent's own model. */
+  selectedModelExplicit?: boolean;
   selectedPermission: PermissionMode;
   selectedMode: UiMode;
   skillsRequested: boolean;
@@ -229,6 +234,17 @@ export function renderToolbar(host: CodexComposerHost): void {
   host.renderAttachments();
 
   const session = host.ensureSession();
+  const notices = host.plugin.workbenchNotices;
+  if (Platform.isDesktopApp && notices) {
+    const settings = host.plugin.settings;
+    const provider = settings.apiProviders.find(item => item.id === (host.selectedProviderSettingsId || settings.activeApiProviderId));
+    const model = provider?.models.find(item => item.id === host.effectiveModel());
+    updateComposerPoints(host.inputEl, notices, {
+      sessionId: session.id, language: settings.settingsLanguage,
+      enabled: provider?.providerId === "xiaoecho",
+      estimate: model && xiaoechoTypicalPointsLabel(model, settings.settingsLanguage)
+    });
+  }
   const knowledgeManager = host.plugin.getKnowledgeSurfaceService();
   const knowledgeTaskRunning = Boolean(knowledgeManager?.isRunning);
   const workspacePath = normalizeWorkspacePath(session.cwd);
@@ -642,7 +658,11 @@ export function openModelMenu(host: CodexComposerHost, event: MouseEvent): void 
   showModelMenu(event, {
     ...composerModelMenuState(host),
     readCurrent: () => composerModelMenuState(host),
-    subscribeChanges: subscribeXiaoechoCatalogChanges
+    subscribeChanges: listener => {
+      const disposeCatalog = subscribeXiaoechoCatalogChanges(listener);
+      const disposePoints = host.plugin.workbenchNotices?.subscribe(listener);
+      return () => { disposeCatalog(); disposePoints?.(); };
+    }
   }, {
     onSelectModel: (selection) => void selectComposerModel(host, selection),
     onSelectReasoning: (reasoning) => selectComposerReasoning(host, reasoning),
@@ -669,6 +689,7 @@ export function composerModelMenuState(host: CodexComposerHost) {
   return {
     language: host.plugin.settings.settingsLanguage,
     providerModels: composerProviderModelOptions(host),
+    pointsGrouping: host.plugin.workbenchNotices && { balance: host.plugin.workbenchNotices.balance() },
     selectedProviderSettingsId: host.selectedProviderSettingsId,
     selectedModel: host.selectedModel,
     selectedReasoning: reasoning?.effort ?? null,
@@ -775,6 +796,8 @@ export async function selectComposerModel(
   }
   host.selectedProviderSettingsId = selection.providerSettingsId;
   host.selectedModel = selection.modelId;
+  host.selectedReasoning = undefined;
+  host.selectedModelExplicit = true;
   ensureComposerReasoningPreference(host);
   host.renderToolbar();
   if (correctedReasoning) showComposerReasoningFallbackNotice(
@@ -812,6 +835,14 @@ export function selectComposerReasoning(host: CodexComposerHost, reasoning: Reas
       : state && !state.adjustable
         ? conversationUiText(host.plugin.settings.settingsLanguage, "当前模型的思考强度由模型决定", "This model determines its own reasoning effort")
         : conversationUiText(host.plugin.settings.settingsLanguage, "当前模型不支持这个思考强度，请重新选择", "This model does not support that reasoning effort. Choose another one."));
+    return;
+  }
+  if (host.selectedReasoning !== undefined) {
+    // An Agent's own effort stays with this conversation; the model settings are untouched.
+    host.selectedReasoning = reasoning;
+    host.selectedModelExplicit = true;
+    host.onInputChanged();
+    host.renderToolbar();
     return;
   }
   state.model.reasoningEffort = reasoning;
@@ -880,13 +911,14 @@ export function ensureComposerReasoningPreference(
   host: Pick<
     CodexComposerHost,
     "plugin" | "selectedProviderSettingsId" | "selectedModel"
-  >,
+  > & { readonly selectedReasoning?: ReasoningEffort },
   notify = true
 ): Readonly<ComposerReasoningState> | null {
   const state = resolveComposerReasoningState(
     host.plugin.settings,
     host.selectedProviderSettingsId,
-    host.selectedModel
+    host.selectedModel,
+    host.selectedReasoning
   );
   if (!state || !applyComposerReasoningFallback(state)) return state;
   saveComposerSettings(host, conversationUiText(host.plugin.settings.settingsLanguage, "思考强度", "reasoning effort"));

@@ -112,7 +112,8 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     f.dispose();
     console.log("PASS failed default creation preserves the full draft, owners and ID across reopen/retry");
   }
-  for (const change of ["name", "position", "avatar", "current-avatar", "style", "current-style", "module", "capability"]) {
+  // 2026-11-25: module tools left the editor, so the old "capability" interaction no longer exists.
+  for (const change of ["name", "position", "avatar", "current-avatar", "style", "current-style", "module"]) {
     const f = fixture(); await f.open();
     if (change === "name") { input(f.root, "name", "暂定"); input(f.root, "name", ""); }
     if (change === "position") input(f.root, "position", "用户自己填写的职位");
@@ -121,7 +122,6 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     if (change === "style") f.root.querySelector<HTMLButtonElement>('[data-persona-template="analysis"]')!.click();
     if (change === "current-style") f.root.querySelector<HTMLButtonElement>('[data-persona-template="execution"]')!.click();
     if (change === "module") f.root.querySelector<HTMLButtonElement>('[data-module-id="journal"]')!.click();
-    if (change === "capability") f.root.querySelector<HTMLButtonElement>('[data-capability-id="journal"]')!.click();
     await settle();
     assert.equal(submit(f.root), null);
     assert.equal(f.root.querySelector('[data-field="name"]')!.getAttribute("aria-invalid"), "true");
@@ -132,7 +132,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     assert.equal(f.saved[0].agent.name, "我的同事"); assert.equal(f.saved[0].agent.id, f.allocatedIds[0]);
     assert.equal(f.saved[0].agent.position, change === "position" ? "用户自己填写的职位" : "");
     assert.deepEqual(f.saved[0].moduleIds, change === "module" ? ["journal"] : []);
-    assert.deepEqual(f.saved[0].agent.capabilityIds, change === "module" || change === "capability" ? ["journal"] : []);
+    assert.deepEqual(f.saved[0].agent.capabilityIds, [], "owning a module adds no capability grant");
     assert.deepEqual(f.saved[0].agent.disabledCapabilityIds ?? [], []);
     if (change === "avatar") assert.deepEqual(f.saved[0].agent.avatar, { kind: "preset", presetId: "nova" });
     if (change === "style") assert.equal(f.saved[0].agent.styleId, "analysis");

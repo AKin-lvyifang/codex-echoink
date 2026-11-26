@@ -1,6 +1,5 @@
 import { actionFailureText } from "../core/error-copy";
 import { ModuleOwnerRequired } from "../agents/registry";
-import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { KnowledgeCheckupPanel } from "./knowledge-checkup/panel";
 import { KnowledgeMapPanel } from "./knowledge-map/panel";
 import { renderKnowledgeStatistics } from "./knowledge-map/statistics";
@@ -18,7 +17,8 @@ import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking
 import { ForegroundView } from "../ui/foreground-view";
 import { loadKnowledgePageData, type KnowledgePageSnapshot } from "./knowledge-page-data";
 import { getWorkbenchDataService } from "./workbench-data";
-import { prefillWorkbenchModule } from "./module-navigation";
+import { prefillWorkbenchModule, renderModuleOwnerAction, workbenchModuleOwner } from "./module-navigation";
+import { moduleOwnerActionLabel, moduleOwnerActionPrompt } from "./module-actions";
 
 
 export const KNOWLEDGE_PAGE_VIEW_TYPE = "echoink-knowledge-page";
@@ -180,11 +180,11 @@ export class KnowledgePageView extends ItemView {
       const title = header.createDiv({ cls: "knowledge-title" });
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
       back.setAttribute("aria-label", this.t("返回工作台", "Back to workbench")); back.dataset.echoinkWorkbenchBack = ""; setIcon(back, "arrow-left"); title.createEl("h1").dataset.echoinkModuleTitle = "";
-      this.button(header, "", () => prefillWorkbenchModule(this.plugin, "knowledge-base", this.t("帮我看看知识库里有哪些值得整理的内容", "Help me review what is worth organizing in my knowledge base")), "is-primary").dataset.knowledge = "owner";
+      const actions = header.createDiv({ cls: "echoink-module-header-actions" });
+      this.button(actions, "", () => prefillWorkbenchModule(this.plugin, "knowledge-base", moduleOwnerActionPrompt("knowledge-base", { english: this.plugin.settings.settingsLanguage === "en" })), "").dataset.knowledge = "owner";
     }
     header.querySelector("h1")!.setText(this.t("知识库", "Knowledge"));
-    const label = moduleOwnerLabel(this.plugin, "knowledge-base");
-    this.field("owner").setText(label);
+    renderModuleOwnerAction(this.field("owner"), workbenchModuleOwner(this.plugin, "knowledge-base"), moduleOwnerActionLabel("knowledge-base", { english: this.plugin.settings.settingsLanguage === "en" }));
   }
   private heading(host: HTMLElement, title: string): HTMLElement { const heading = host.createDiv({ cls: "knowledge-heading" }); heading.createEl("h2", { text: title }); return heading; }
   private regionError(host: HTMLElement, message?: string): void {

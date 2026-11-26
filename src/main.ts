@@ -1,3 +1,4 @@
+import { WorkbenchNotices } from "./membership/workbench-notices";
 import { setXiaoechoLanguageProbe } from "./membership/xiaoecho-catalog";
 import { ReleaseUpdateController } from "./settings/release-update";
 import { forkPrefillText, syncForkSource, type RemoteConversationSummary, type SyncConversationMessage } from "./sync/conversations";
@@ -62,6 +63,7 @@ import { assertTaskResumeCapabilities } from "./plugin/pi-production-runtime-com
 import { cloneQueuedTurnItem, type QueuedTurnItem } from "./ui/turn-queue";
 import { frozenTurnReasoningSelectionIsValid } from "./ui/codex-view/turn-runner";
 import { resolveComposerReasoningState } from "./ui/composer-reasoning";
+import { resolveAgentModelSelection } from "./agents/agent-model";
 import { readDurableTaskInterruptionStage } from "./harness/pi-native/pi-native-conversation-runtime";
 import { consumeAcceptedTaskDraft } from "./agents/task-workspace";
 import { ConversationRunService } from "./plugin/conversation-run-service";
@@ -250,6 +252,7 @@ extends ActivatePiNativeConversationOptions {
 
 export default class CodexForObsidianPlugin extends Plugin {
   readonly releaseUpdate = new ReleaseUpdateController();
+  workbenchNotices?: WorkbenchNotices;
   private readonly reportLogin = new RunReportLogin();
   settings!: CodexForObsidianSettings;
   homeActivity: HomeActivityService | null = null;
@@ -453,6 +456,8 @@ export default class CodexForObsidianPlugin extends Plugin {
       this.register(() => { if (pending !== null) window.clearTimeout(pending); pending = null; });
     }); });
     this.accountService = await createPluginAccountService(this);
+    this.workbenchNotices = new WorkbenchNotices(this.accountService, this.manifest.version, { port: this.app, emptyData: settingsLoad.emptyData });
+    this.register(() => this.workbenchNotices?.dispose());
     this.register(this.accountService.onSignInReturned(() => this.reportLogin.returned()));
     setEchoInkAccountCredentialProbe(() => !!this.accountService?.apiToken());
     this.startDecisionClient();
@@ -842,6 +847,10 @@ export default class CodexForObsidianPlugin extends Plugin {
     return false;
   }
   isEchoInkOnboardingRequested(): boolean { return this.onboardingRequested; }
+  isWorkbenchStarBlocked(): boolean {
+    return this.onboardingRequested || this.piRunConversations.size > 0 || this.piSubmittingConversations.size > 0
+      || [...this.getConversationRunService().runs.values()].some(run => run.running || !!run.flight);
+  }
   shouldAutoOpenEchoInkOnboarding(): boolean { return this.onboardingRequested; }
   async dismissEchoInkOnboarding(): Promise<void> {
     const previousRequested = this.onboardingRequested;
@@ -1474,14 +1483,16 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (frozenItem) {
       item = cloneQueuedTurnItem(frozenItem);
     } else {
-      const providerId = recoveryTarget?.providerSettingsId ?? choice?.providerId ?? this.settings.activeApiProviderId;
-      const modelId = recoveryTarget?.modelId ?? choice?.model ?? this.settings.defaultModel;
+      // Unless the person switched models in this task, it resumes on its Agent's own model.
+      const agentModel = !recoveryTarget && !reply?.selectedModelExplicit ? resolveAgentModelSelection(this.settings, entry.agentId) : null;
+      const providerId = recoveryTarget?.providerSettingsId ?? agentModel?.providerSettingsId ?? choice?.providerId ?? this.settings.activeApiProviderId;
+      const modelId = recoveryTarget?.modelId ?? agentModel?.modelId ?? choice?.model ?? this.settings.defaultModel;
       const provider = this.settings.apiProviders.find(provider => provider.id === providerId);
       const model = provider && getApiProviderModel(provider, modelId);
       if (!provider || !model) throw new Error(pickErrorCopy(CAUSE.providerModelRemoved, this.settings.settingsLanguage));
       item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || (failure.toolCallTextFailure ? TOOL_CALL_RESUME_PROMPT : "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。"), attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
         turnOptions: { cwd: this.getVaultPath(), providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id,
-          reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id)?.effort ?? "none",
+          reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id, agentModel ? agentModel.reasoning : reply?.selectedReasoning)?.effort ?? "none",
           permission: choice?.permission ?? this.settings.defaultPermission, mode: choice?.mode ?? "agent", mcpEnabled: true }, clearComposerAfterPiAcceptance: false };
     }
     const selection = item.turnOptions;

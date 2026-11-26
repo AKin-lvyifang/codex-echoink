@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.9.3：新待办，财务改版" src="assets/releases/echoink-agent-2.9.3-release.png">
+    <img width="1024" alt="EchoInk 2.9.5：工作台改版，更新有礼" src="assets/releases/echoink-agent-2.9.5-release.png">
   </a>
 </p>
 
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Obsidian 社区插件下载量"></a>
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.4"><img src="https://img.shields.io/badge/version-2.9.4-0EA5E9?style=flat-square" alt="版本 2.9.4"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.5"><img src="https://img.shields.io/badge/version-2.9.5-0EA5E9?style=flat-square" alt="版本 2.9.5"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-16A34A?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
@@ -70,7 +70,7 @@
 | 云同步 | — | 1 GB | 5 GB |
 | 内置模型 AI 点数（每月） | — | 500 | 3000 |
 
-任何方案都可以自备模型 API Key，方案与价格见[官网](https://echoink.cn/plans)。
+任何方案都可以自备模型 API Key。登录账号后，也可以领取符合条件的一次性工作台礼物。方案与价格见[官网](https://echoink.cn/plans)。
 
 <details>
 <summary>完整功能清单</summary>
@@ -102,8 +102,10 @@
 
 | 功能 | 说明 | 基础版 | PRO 版 |
 | --- | --- | --- | --- |
-| 工作台 | 电脑端集中查看任务、提醒、入门卡片和天气，在当前工作台页切换模块并自定义导航 | ✅ | ✅ |
-| 日记 | 支持自定义命名；电脑端可预览整理老日记并撤销移动 | ✅ | ✅ |
+| 工作台 | 电脑端分组查看提醒、待确认、今日待办和任务进度，在当前工作台页切换模块并自定义导航 | ✅ | ✅ |
+| 工作台礼物 | 登录后在电脑、iPhone 或 iPad 领取符合条件的礼物 | ✅ | ✅ |
+| AI 点数与模型菜单 | 电脑端在对话输入区查看余额，模型菜单单列小echo | ✅ | ✅ |
+| 日记 | 电脑端登录后，可为满足篇数要求的月份生成日记人格；支持自定义命名；电脑端可预览整理老日记并撤销移动 | ✅ | ✅ |
 | 待办 | 按日期分组，一句话快速添加，支持子任务和分类颜色。日历有月、周、日视图，电脑可拖动改期 | ✅ | ✅ |
 | 财务 | 按月或年看收支，一句话记账，管理固定支出和专项预算，导入账单后生成 AI 月度结账报告 | ❌ | ✅ |
 | 英文日记 | 电脑端生成英文稿，修正错误或明显不自然的英文，积累有学习价值的表达 | ❌ | ✅ |
@@ -115,6 +117,7 @@
 | 一人公司 | 电脑、iPhone 与 iPad 由总助派活，开工卡确认后推进项目；问题与审批集中在「等你定」；移动端为 Beta | ✅ | ✅ |
 | 模块负责人 | 在 Agent 设置指定各模块的角色 Agent；未指定时先选人再开始，付费模块仍沿用各自权益 | ✅ | ✅ |
 | 多 Agent 任务 | 查看员工任务与产出；中断后核对并继续，项目和员工会话暂不跨设备查看、接续 | ✅ | ✅ |
+| Agent 模型 | 每个 Agent 可跟随当前对话，或单独指定模型和该模型支持的思考强度 | ✅ | ✅ |
 | Agent 人格导入 | 新建 Agent 时可粘贴已有的人设 | ✅ | ✅ |
 | 专家聘请与投稿 | 聘请后可改名、换头像、选用自己的 Skill 和 MCP；PRO 用户可投稿自建 Agent，投稿人可在三端查看审核结果和原因。收录后展示作者和聘请人数 | ❌ | ✅ |
 
@@ -135,10 +138,10 @@
 
 - **笔记默认留在本地**：对话、知识、记忆、日记和财务记录保存在你的 Vault。只有你开启云同步后，所选范围内的文件才会加密上传到 echoink.cn。
 - **AI 请求发给你选择的模型服务**，只带该请求所需的内容：用自己的 API Key 时直连该服务，选择小echo 时经 echoink.cn 转发并扣除 AI 点数。
-- **会联网到 echoink.cn 的功能**：账号登录与 PRO 授权、云同步、小echo、智能判断、资讯、PRO Skill 下载、专家浏览与下载、投稿与审核回执、聘请上报和收录状态检查、可选的天气、工作台签到、你登录后主动上报的问题报告，以及检查更新和版本说明。PRO 需要 EchoInk 账号，用自备模型的对话和知识库不需要。
+- **会联网到 echoink.cn 的功能**：账号登录与 PRO 授权、云同步、小echo、智能判断、主动生成日记人格、资讯、PRO Skill 下载、专家浏览与下载、投稿与审核回执、聘请上报和收录状态检查、可选的天气、工作台签到与礼物领取、你登录后主动上报的问题报告，以及检查更新和版本说明。PRO 需要 EchoInk 账号，用自备模型的对话和知识库不需要。
 - **可选的第三方服务**：联网搜索（Tavily 或 DeepSeek，默认关闭）和 MinerU PDF 解析，账号与费用各自另计。
 - **电脑端可以访问 Vault 外的文件**，范围取决于你选择的权限；也会运行你配置的本机 MCP 命令。
-- **统计与公开展示**：EchoInk 不做插件端遥测。聘请成功后由官网按账号为该专家计数，目录公开显示汇总人数。
+- **统计与公开展示**：EchoInk 不做插件端遥测。桌面 GitHub Star 提示的选择仅保存在本机。聘请成功后由官网按账号为该专家计数，目录公开显示汇总人数。
 
 完整内容见[隐私与数据说明](PRIVACY_CN.md)。
 
@@ -166,7 +169,7 @@
 
 ## 最近更新
 
-**2.9.4**（2026-11-24）：财务总览的金额保持单行，打开时页面不再反复跳动，电脑上的主金额更醒目。完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
+**2.9.5**（2026-11-25）：工作台改版，新增更新礼物、对话点数面板和日记人格。完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
 
 ## 许可
 

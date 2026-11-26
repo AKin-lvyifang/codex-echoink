@@ -17,6 +17,7 @@ import { newId, getActiveApiProviderModel, type StoredSession } from "../setting
 import { resolveComposerReasoningState } from "../ui/composer-reasoning";
 import { createPiConversationShell } from "../ui/codex-view/session-controller";
 import { GENERAL_ASSISTANT_ID } from "../agents/types";
+import { withAgentModel } from "../agents/agent-model";
 import type { QueuedTurnOutcome } from "../ui/codex-view/runner-context";
 import { agentPositionDescription } from "../agents/identity";
 import { isAgentHired } from "../agents/persona";
@@ -51,7 +52,6 @@ export function createCompanyHost(plugin: CodexForObsidianPlugin, deviceId?: str
     moduleOwner: module => getModuleOwner(plugin.settings.agentRegistry, module)?.id ?? null,
     ...(deviceId ? { deviceId: () => deviceId } : {}),
     routerPermission: routerId => companyRouterPermission(plugin, routerId),
-    folderGrantsEnabled: () => plugin.settings.agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.companyFolderGrants !== false,
     createWorker: input => {
       const existing = workerFlights.get(input.id); if (existing) return existing;
       const flight = Promise.resolve().then(async () => {
@@ -63,7 +63,10 @@ export function createCompanyHost(plugin: CodexForObsidianPlugin, deviceId?: str
       workerFlights.set(input.id, flight); return flight;
     },
     startTurn: async (id, text, permission, inheritFrom) => {
-      const turnOptions = { ...options(inheritFrom ?? id), permission, companyProgrammatic: true };
+      // A conversation keeps its own (possibly manually switched) model; anything inherited runs on the Agent's model.
+      const source = inheritFrom ?? id, own = source === id && runs().lastTurnOptions.has(id);
+      const base = options(source);
+      const turnOptions = { ...(own ? base : withAgentModel(plugin.settings, session(id)?.agentId, base)), permission, companyProgrammatic: true };
       const outcome = await runs().start({ id: newId("company-turn"), sessionId: id, text, attachments: [], skill: null, turnOptions, kind: "chat", createdAt: Date.now() }, "composer");
       if (outcome !== "running" && outcome !== "completed") throw new Error("任务未能开始。请在 设置 → 模型服务 中检查模型。");
     },

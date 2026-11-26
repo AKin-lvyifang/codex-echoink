@@ -78,6 +78,7 @@ export const local = [
   "scripts/iphone-task-tests.mjs",
   "scripts/jianpay-plan-entry-tests.mjs",
   "scripts/journal-format-tests.mjs",
+  "scripts/diary-persona-tests.mjs",
   "scripts/journal-page-tests.mjs",
   "scripts/journal-task-recovery-tests.mjs",
   "scripts/knowledge-folder-picker-tests.mjs",

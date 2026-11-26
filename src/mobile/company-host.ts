@@ -74,7 +74,6 @@ export function createMobileCompanyHost(input: MobileCompanyHostInput): CompanyH
     ...(input.sync ? { deviceId: () => input.sync!.deviceId } : {}),
     moduleOwner: module => getModuleOwner(input.settings().agentRegistry, module)?.id ?? null,
     routerPermission: routerId => toCompany(mobileCompanyPermission(store, routerId)),
-    folderGrantsEnabled: () => input.settings().agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.companyFolderGrants !== false,
     createWorker: async worker => {
       if (session(worker.id)) return;
       await store.update(state => {

@@ -24,7 +24,7 @@ export function releaseReminderRows(
   if (updateVersion) rows.push({
     kind: "update", version: updateVersion, icon: "circle-arrow-up",
     text: en ? `EchoInk ${updateVersion} is out` : `EchoInk ${updateVersion} 已发布`,
-    action: en ? "Update" : "去更新",
+    action: en ? "Update" : "更新",
     close: en ? "Dismiss update reminder" : "关闭更新提醒",
     select: () => { document.defaultView?.open(ECHOINK_COMMUNITY_URI, "_blank"); },
     dismiss: () => controller.dismissUpdate(updateVersion)

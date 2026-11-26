@@ -15,7 +15,7 @@ function renderMorphIcon(button: HTMLElement, idle: string, hover: string): void
   setIcon(wrap.createSpan({ cls: "echoink-about-morph-icon-hover" }), hover);
 }
 
-function renderStarIcon(button: HTMLElement): void {
+export function renderStarIcon(button: HTMLElement): void {
   const wrap = button.createSpan({ cls: "echoink-sparkle-icon-wrap", attr: { "aria-hidden": "true" } });
   const github = wrap.createSpan({ cls: "echoink-sparkle-icon-default" });
   const svg = ownedSvg(button.ownerDocument, "svg");

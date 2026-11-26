@@ -1,3 +1,4 @@
+import { runWorkbenchNoticeTests } from "./workbench-notices";
 import { installObsidianDom } from "./obsidian-dom";
 import * as assert from "node:assert/strict";
 import { App, Platform, openTestModals } from "obsidian";
@@ -9,7 +10,7 @@ import { pricingProducts, runAccountMembershipPricingTests } from "./account-mem
 import { runAccountMembershipSubscriptionTests } from "./account-membership-subscription";
 import { displayedTooltipsForTests } from "./obsidian-shim";
 import { renderDesktopCloudSync } from "../settings/cloud-sync-settings";
-import { mountWorkbenchCloudSync } from "../home/cloud-sync-status";
+import { mountWorkbenchCloudSync, workbenchCloudSyncState } from "../home/cloud-sync-status";
 import { syncLastSeen, syncUsagePresentation, syncDeviceIcon } from "../settings/cloud-sync-presentation";
 import type CodexForObsidianPlugin from "../main";
 import { cloudSyncStatusText } from "../ui/mobile/cloud-sync-settings";
@@ -85,9 +86,13 @@ async function cloudSyncPresentationTests(win: Window & typeof globalThis) {
   assert.equal(host.querySelectorAll(".echoink-cloud-sync-remove").length, 1);
   assert.match(host.textContent!, /Last synced 3 min ago/);
   const home = win.document.createElement("div"); win.document.body.append(home);
-  const stopHome = mountWorkbenchCloudSync(home, plugin, false);
-  assert.equal(home.querySelector(".wb-cloud-sync-percent")!.textContent, "36%");
-  assert.ok(home.querySelector(".wb-cloud-sync-status")!.textContent!.includes("1.80 GB / 5 GB"));
+  let attentionChanges = 0;
+  const stopHome = mountWorkbenchCloudSync(home, plugin, false, () => { attentionChanges++; });
+  const cloudButton = home.querySelector<HTMLButtonElement>("button.wb-cloud-sync")!;
+  const cloudDot = cloudButton.querySelector<HTMLElement>(".wb-cloud-sync-dot")!;
+  assert.ok(cloudButton.getAttribute("aria-label")!.includes("1.80 GB / 5 GB"), "the title-bar button names the full status");
+  assert.equal(cloudDot.hidden, true, "a healthy sync shows no dot");
+  assert.equal(workbenchCloudSyncState(plugin, false)!.attention, null);
   assert.ok(cloudSyncStatusText(view, false).includes("1.80 GB / 5 GB"));
   const synced = view, now = Date.now();
   view = { ...view, status: { ...view.status!, phase: "rate-limited", lastError: "RATE_LIMITED", retryAt: now + 230_000 } };
@@ -95,22 +100,26 @@ async function cloudSyncPresentationTests(win: Window & typeof globalThis) {
   assert.equal(cloudSyncStatusText(view, true, now), "同步请求过多，约 4 分钟后自动继续");
   assert.equal(cloudSyncStatusText(view, true, now + 171_000), "同步请求过多，稍后自动继续");
   assert.equal(cloudSyncStatusText(view, true, now + 170_000), "同步请求过多，约 1 分钟后自动继续");
-  for (const text of [section.querySelector(".echoink-cloud-sync-status")!.textContent, home.querySelector(".wb-cloud-sync-status")!.textContent]) {
-    assert.equal(text, "Too many sync requests. Sync will resume in about 4 minutes.");
-  }
+  assert.equal(section.querySelector(".echoink-cloud-sync-status")!.textContent, "Too many sync requests. Sync will resume in about 4 minutes.");
+  assert.equal(cloudButton.getAttribute("aria-label"), "Cloud sync: Too many sync requests. Sync will resume in about 4 minutes.");
+  assert.equal(cloudDot.hidden, false, "a sync limit marks the button");
+  assert.equal(workbenchCloudSyncState(plugin, false)!.attention, "Too many sync requests. Sync will resume in about 4 minutes.", "and joins the reminders");
+  assert.equal(attentionChanges, 1);
   view = { ...view, enabled: false, status: null, enableRateLimited: true };
   assert.equal(cloudSyncStatusText(view), "同步请求过多，请稍后重新开启");
   view = synced;
   const clock = Date.now;
   try { Date.now = () => clock() + 60_000; listeners.forEach(fn => fn()); assert.match(host.textContent!, /Last synced 4 min ago/); } finally { Date.now = clock; }
-  home.querySelector<HTMLButtonElement>(".wb-cloud-sync-settings")!.click(); await Promise.resolve(); assert.equal(settingsOpened, 1);
+  assert.equal(cloudDot.hidden, true); assert.equal(attentionChanges, 2);
+  cloudButton.click(); await Promise.resolve(); assert.equal(settingsOpened, 1, "the button opens account settings");
   view = { ...view, status: { ...view.status!, usedBytes: 4.5 * gib, nearQuota: true, phase: "syncing", pending: 3 } }; listeners.forEach(fn => fn());
   assert.ok(section.querySelector(".echoink-cloud-sync-meter.is-warning"));
   assert.equal(scopePage.querySelector('.echoink-cloud-folder-choice[data-path="notes"] [role="checkbox"]'), keptCheck, "status refresh preserves choice identity");
     closeScope();
   assert.equal(scopeRow.querySelector(".echoink-settings-navigation-value")!.textContent, "Whole vault, except 1 folder", "returning refreshes the summary");
-  assert.ok(home.querySelector(".wb-cloud-sync-row.is-warning"));
-  assert.match(home.textContent!, /3 uploads pending/);
+  assert.equal(cloudDot.hidden, false, "90% of the quota marks the button");
+  assert.equal(workbenchCloudSyncState(plugin, false)!.attention, "Cloud storage 90% used");
+  assert.match(cloudButton.getAttribute("aria-label")!, /3 uploads pending/);
   host.querySelector<HTMLButtonElement>(".echoink-cloud-sync-remove")!.click();
   assert.equal(removals, 1); assert.equal(host.querySelector<HTMLButtonElement>(".echoink-cloud-sync-remove")!.disabled, true);
   releaseRemoval!(); await new Promise(resolve => setTimeout(resolve, 0));
@@ -119,7 +128,7 @@ async function cloudSyncPresentationTests(win: Window & typeof globalThis) {
   view = { ...view, enabled: false, status: null, devices: [] }; listeners.forEach(fn => fn());
   assert.equal(host.querySelector(".echoink-cloud-sync-device-count")!.textContent, "1 / 3", "bound devices remain visible when synchronization is off");
   assert.match(section.textContent!, /— \/ 5 GB/);
-  assert.equal(home.querySelector<HTMLElement>(".wb-cloud-sync-percent")!.hidden, true, "unknown/off usage must not claim a measured zero");
+  assert.equal(cloudDot.hidden, true, "sync turned off is not a problem to flag");
   stopHome(); dispose(); host.remove(); home.remove();
   assert.equal(listeners.size, 0); assert.equal(accountListeners.size, 0);
 }
@@ -127,6 +136,7 @@ async function cloudSyncPresentationTests(win: Window & typeof globalThis) {
 export async function runAccountMembershipTests(win: Window & typeof globalThis) {
   installObsidianDom(win);
   runAccountMembershipPricingTests();
+  await runWorkbenchNoticeTests();
   const scheduler = prepareDocument(win);
   await cloudSyncPresentationTests(win);
   const adapter = createUnavailableAccountAdapter();

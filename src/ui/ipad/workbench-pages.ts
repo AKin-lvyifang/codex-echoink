@@ -1,3 +1,4 @@
+import { giftTriggerLabel, mountWorkbenchGifts } from "../workbench-gifts";
 import { saveWorkbenchDismissal } from "../../home/workbench-dismissals";
 import { settingsErrorText } from "../../core/error-copy";
 import { getModuleOwner } from "../../agents/registry";
@@ -56,7 +57,8 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   const date = el(ctx.document, "div", "pd-home-date"); copy.append(el(ctx.document, "h1", "", "工作台"), date);
   const newTask = ipadButton(ctx.document, "新任务", () => { void ctx.navigate({ kind: "agent", agentId: GENERAL_ASSISTANT_ID }).catch(error => ctx.error(error)); }, "is-primary", "plus");
   newTask.disabled = !!ctx.host.store.unavailableReason;
-  header.append(copy,
+  const gift = ctx.host.workbenchNotices && shellIconButton(ctx.document, giftTriggerLabel(ctx.host.settings().settingsLanguage), "gift", () => {});
+  header.append(copy, ...(gift ? [gift] : []),
     shellIconButton(ctx.document, "搜索笔记", "search", () => { void ctx.host.openSearch().catch(error => ctx.error(error)); }),
     shellIconButton(ctx.document, "EchoInk 设置", "settings", () => { void ctx.host.openLegacy("settings").catch(error => ctx.error(error)); }),
     newTask);
@@ -80,6 +82,10 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   releases.setAttribute("aria-live", "polite");
   const releaseReminders = mountMobileReleaseReminders(content, releases, ctx.host, "pd", { icon: ipadIcon, button: ipadButton }, ctx.shell);
   content.append(header, navigation, releases, companySlot, ...taskGroups.map(group => group.element), signals.element, completed.element, todos.element, readError);
+  const giftControl = gift && ctx.host.workbenchNotices && mountWorkbenchGifts(gift, ctx.host.workbenchNotices, {
+    language: () => ctx.host.settings().settingsLanguage, mobileSheet: ctx.shell,
+    visible: () => content.isConnected && !ctx.document.hidden && !content.closest("[hidden], [inert]")
+  });
   if (ctx.host.store.unavailableReason) content.insertBefore(readError, taskGroups[0].element);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "", factsFailure = "";
   let nextFactRefresh = Infinity;
@@ -288,7 +294,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   }, 1000);
   return { id: "ipad-home", title: "工作台", header: "content", content, dispose() {
     if (disposed) return; disposed = true; window?.clearInterval(clock);
-    releaseReminders.dispose(); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot);
+    giftControl?.dispose(); releaseReminders.dispose(); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot);
     for (const card of cards.values()) card.question?.dispose(); cards.clear(); signalCache.clear(); todoCache.clear();
   } };
 }

@@ -55,6 +55,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     const transport: MembershipTransport = async (path, _method, body: any, token) => {
       calls.push(path);
       if (offline) throw new Error("OFFLINE");
+      if (path === "/api/notices") return { notices: [{ id: "gift", kind: "gift", title: "Gift", points: 100, desc: "", grantsOnClaim: true }] };
       if (path === "/api/auth/logout") return {};
       if (path === "/api/auth/login" || path === "/api/auth/password") return { token: body.email.startsWith("B") ? "B" : "A" };
       if (path === "/api/account") return account(token);
@@ -98,6 +99,9 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     return { service, storage, calls, opened, maxSales(value: boolean | undefined) { maxSalesOpen = value; }, monthly(value: number | undefined) { proMonthlyPoints = value; }, sales(value: boolean) { salesOpen = value; }, early(value: boolean) { earlyAvailable = value; }, beta(value: string) { offerStatus = value; }, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; }, catalog(value: MembershipProduct[]) { catalog = value; }, offer(value: MembershipEarlyOffer | null | undefined) { earlyOffer = value; }, failProducts(error: Error | null) { productsError = error; }, failRights(error: Error | null) { rightsError = error; }, waitProducts(value: (() => Promise<void>) | null) { waitProducts = value; } };
   }
   const maxShop = await fixture();
+  assert.deepEqual(await maxShop.service.getNotices("2.9.5"), {
+    notices: [{ id: "gift", kind: "gift", title: "Gift", points: 100, desc: "", grantsOnClaim: true }]
+  });
   try {
     maxShop.catalog([...pricingProducts]);
     // Repeated refreshes exercise closed -> open -> closed with independent PRO sales.

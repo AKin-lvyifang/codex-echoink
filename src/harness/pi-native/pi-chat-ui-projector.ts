@@ -1,3 +1,4 @@
+import { isObsidianCliRead } from "./obsidian-cli-policy";
 import { TOOL_ROUND_STOP_MESSAGE } from "../../agents/tool-round-budget";
 import { knowledgeResultText, uniqueNotePaths } from "../../types/composer-submission";
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
@@ -213,6 +214,7 @@ export type PiChatUiRunState =
 /** Optional ProductRun identities let a durable rebuild retain UI turn groups. */
 export interface PiChatUiRunIdentity {
   readonly interruptionReason?: "tool_loop_limit";
+  readonly watchdogStoppedAt?: number;
   readonly toolCallTextFailure?: string;
   readonly productRunId: string;
   readonly userEntryId: string;
@@ -296,6 +298,7 @@ interface BranchProjectionContext {
   readonly toolRuns: Map<string, string>;
   readonly privacySafeToolRuns: ReadonlySet<string>;
   readonly maintenanceRunIds: ReadonlySet<string>;
+  readonly watchdogStops: ReadonlyMap<string, number>;
   currentRunId?: string;
 }
 
@@ -388,6 +391,9 @@ export class PiChatUiProjector {
       toolRuns,
       privacySafeToolRuns,
       maintenanceRunIds,
+      watchdogStops: new Map((input.runIdentities ?? []).flatMap(run =>
+        run.watchdogStoppedAt !== undefined && (runState !== "running" || run.productRunId !== input.productRunId)
+          ? [[run.productRunId, run.watchdogStoppedAt] as const] : [])),
       currentRunId: input.productRunId
     };
     // Reasoning summaries persist the actual tool events; assistant timestamps include model waiting.
@@ -971,6 +977,8 @@ export class PiChatUiProjector {
           || toolCall.toolName === PI_USER_QUESTION_TOOL_ID
         ) continue;
         const toolRunId = context.toolRuns.get(toolCall.toolCallId) ?? runId;
+        const watchdogStoppedAt = toolRunId ? context.watchdogStops.get(toolRunId) : undefined;
+        const stoppedRead = watchdogStoppedAt !== undefined && isObsidianCliRead(toolCall.toolName, toolCall.args);
         // Old ProductRuns may lack tool IDs; Session calls still carry their real entry/run owner.
         if (toolRunId) context.toolRuns.set(toolCall.toolCallId, toolRunId);
         upsertMessage(messages, toolMessage({
@@ -980,12 +988,13 @@ export class PiChatUiProjector {
           args: toolCall.args,
           privacySafe: context.privacySafeToolRuns.has(toolCall.toolCallId),
           maintenanceContext: !!toolRunId && context.maintenanceRunIds.has(toolRunId),
-          status: initialPiToolCallStatus(toolCall.toolName),
+          status: stoppedRead ? "interrupted" : initialPiToolCallStatus(toolCall.toolName),
+          ...(stoppedRead ? { completedAt: watchdogStoppedAt, resultText: "工具调用在结果提交前中断" } : {}),
           runId: toolRunId,
           createdAt: this.toolExecutionTimes.get(this.toolTimeKey(context.piSessionId, toolCall.toolCallId))?.startedAt ?? observedAt,
           vaultPath: context.vaultPath
         }));
-        pendingTools.add(toolCall.toolCallId);
+        if (!stoppedRead) pendingTools.add(toolCall.toolCallId);
       }
       const reasoningBlocks = providerReasoningBlocksFromContent(
         message.content

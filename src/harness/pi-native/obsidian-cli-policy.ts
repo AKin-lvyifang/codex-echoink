@@ -144,3 +144,9 @@ export function obsidianCliArgv(request: ObsidianCliRequest): string[] {
     return [`${key}=${String(value).replaceAll("\\", "\\\\").replaceAll("\r\n", "\n").replaceAll("\n", "\\n").replaceAll("\t", "\\t")}`];
   })];
 }
+
+export function isObsidianCliRead(toolName: string, args: unknown): boolean {
+  if (toolName !== "obsidian_cli" || !args || typeof args !== "object" || Array.isArray(args)) return false;
+  try { return obsidianCliEffect(normalizeObsidianCliRequest(args as Record<string, unknown>)) === "read"; }
+  catch { return false; } // The normal tool validation owns invalid arguments.
+}

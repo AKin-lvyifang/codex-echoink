@@ -353,21 +353,21 @@ async function sharedSurfaces(document: Document, file: string): Promise<void> {
   const workbench = Object.create(EchoInkWorkbenchView.prototype) as any;
   Object.assign(workbench, { plugin: typedPlugin, companyService: service, companyInteractions: new CompanyInteractionController(typedPlugin),
     entries: [task, quick].map(dispatch => ({ conversationId: dispatch.id, status: "active", taskStatus: "waiting", updatedAt: 1 })),
-    maintenance: new Map(), field: () => groupHost, disposeControls() {}, render: () => workbench.renderCompanyDecisions() });
+    maintenance: new Map(), taskCardBodies: new Map(), linkingTask: null, diaryReviewOpen: false, id: "wb-fixture",
+    field: () => groupHost, disposeControls() {}, render: () => workbench.renderConfirmations([], Date.now()) });
   workbench.render();
   const off = f.plugin.getConversationRunService().subscribe({ refresh: workbench.render });
   const offCompany = service.subscribe(workbench.render);
-  assert.equal(groupHost.firstElementChild?.getAttribute("data-wb-group"), "company-decisions", "工作台等你定复用顶层分组且排最前");
+  assert.equal(groupHost.firstElementChild?.getAttribute("data-wb-group"), "waiting", "工作台待确认复用顶层分组且排最前");
+  assert.equal(groupHost.querySelector('[data-wb-group="waiting"] h2')?.textContent, "待确认");
   assert.equal(groupHost.querySelector(".wb-count")?.textContent, "2");
   assert.equal(content.querySelectorAll(".echoink-company-interaction").length, 1, "项目页只显示本项目审批");
   const taskTile = content.querySelector('[data-pp-focus="tile-task"]')!;
   assert.match(taskTile.textContent ?? "", /1 等你定/u, "任务tile显示live审批等待");
   assert.ok(!taskTile.textContent?.includes("排队中"), "等待批准不能显示排队中");
   assert.equal(groupHost.querySelectorAll(".echoink-company-interaction").length, 2, "小活审批仅工作台可处理");
-  workbench.group("waiting", "等你回应", 2, false);
-  assert.equal(workbench.taskGroups(Date.now()).waiting.length, 0, "顶层审批卡已有的员工不再重复进普通等你回应组");
-  workbench.taskGroup("waiting", "等你回应", workbench.taskGroups(Date.now()).waiting, Date.now());
-  assert.equal(groupHost.querySelector('[data-wb-group="waiting"]'), null, "真实普通组渲染移除旧查看并确认行");
+  assert.equal(workbench.taskGroups(Date.now()).waiting.length, 0, "顶层审批卡已有的员工不再重复进普通待确认卡片");
+  assert.equal(groupHost.querySelectorAll('[data-wb-group="waiting"] [data-task]').length, 0, "待确认组里没有重复的任务卡");
   const ordinary = { conversationId: "ordinary-task", status: "active", taskStatus: "waiting", updatedAt: 1 };
   workbench.entries.push(ordinary);
   assert.deepEqual(workbench.taskGroups(Date.now()).waiting.map((entry: { conversationId: string }) => entry.conversationId), ["ordinary-task"], "非公司任务的普通待回应行保留");
@@ -427,7 +427,7 @@ async function sharedSurfaces(document: Document, file: string): Promise<void> {
   assert.equal(groupHost.querySelectorAll(".echoink-company-interaction").length, 1, "一处批准后另一处同步消失");
   groupHost.querySelector<HTMLButtonElement>(".is-reject")!.click();
   assert.equal(await waits.get(quick.id), false);
-  assert.equal(groupHost.querySelector('[data-wb-group="company-decisions"]'), null, "空分组隐藏");
+  assert.equal(groupHost.querySelector('[data-wb-group="waiting"]'), null, "空分组隐藏");
   assert.equal(f.turns.length, beforeApproval, "程序通知与批准不唤醒总助模型");
 
   for (const dispatch of [task, quick]) {
@@ -460,7 +460,7 @@ async function sharedSurfaces(document: Document, file: string): Promise<void> {
   groupHost.querySelector<HTMLButtonElement>(".codex-interaction-action.is-primary")!.click();
   await waitUntil(() => service.dispatchOf(quick.id)?.status === "running");
   assert.equal(service.dispatchOf(quick.id)?.answer, "直接讲结论");
-  assert.equal(groupHost.querySelector('[data-wb-group="company-decisions"]'), null);
+  assert.equal(groupHost.querySelector('[data-wb-group="waiting"]'), null);
 
   // Exercise the actual transcript renderer boundary, with the real broker binding.
   const renderer: any = new CodexMessageListRenderer(), transcript = document.body.createDiv();

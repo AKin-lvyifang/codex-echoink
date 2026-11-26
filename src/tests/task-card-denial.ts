@@ -46,7 +46,8 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
       knowledgeAgentIndex: new KnowledgeAgentIndex({ vaultPath: f.plugin.getVaultPath(), storageRootPath: `${f.plugin.getVaultPath()}/denial-index` }),
       knowledgePreferences: {} as never, usage: {} as never,
       conversationKnowledgeDecision: async () => checkAgentCapability(createPiAgentCapabilityContext(f.plugin, "colleague", []), "knowledge") });
-    for (const en of [false, true]) for (const cause of ["agent_disabled", "module_disabled"] as const) {
+    // 2026-11-25: a non-expert Agent always has Knowledge, so only the module's own state can deny it here.
+    for (const en of [false, true]) for (const cause of ["module_disabled"] as const) {
       f.settings.settingsLanguage = en ? "en" : "zh-CN";
       agent.disabledCapabilityIds = cause === "agent_disabled" ? ["knowledge"] : [];
       f.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
@@ -61,7 +62,7 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
     f.productRuns.listReadOnly = async (id: string) => (await listRuns.call(f.productRuns, id)).map(
       (item: { productRunId: string }) => item.productRunId === run.productRunId ? { ...item, error: "agent_capability_agent_disabled:knowledge" } : item);
     await f.plugin.setPiConversationTaskMetadata("C", { taskStatus: "interrupted", taskInterruptedAt: Date.now() });
-    agent.disabledCapabilityIds = ["knowledge"];
+    f.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
     for (const en of [false, true]) {
       f.settings.settingsLanguage = en ? "en" : "zh-CN";
       const info = await f.plugin.readTaskInterruption("C");
@@ -71,9 +72,9 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
       renderTaskInterruption(mount, { info: { ...info, uncertainOperations: [{ id: "pending-write", label: "核对原操作" }] }, pending: false, language: f.settings.settingsLanguage, onResume() {} });
       assert.match(mount.querySelector(".echoink-task-interruption-operations")!.textContent!, /核对原操作/u);
       assert.doesNotMatch(mount.textContent!, /agent_capability_|意外中断|unexpected.*interrupt/iu);
-      assert.match(mount.textContent!, en ? /Knowledge organization is off/ : /未开启「知识整理」.*能用的能力/u);
+      assert.match(mount.textContent!, en ? /Knowledge.*unavailable/ : /知识库.*不可用/u);
     }
-    agent.disabledCapabilityIds = disabled;
+    f.settings.knowledgeBase.folderBindings = bindings;
     const reopened = await f.plugin.readTaskInterruption("C");
     assert.equal(reopened.resumeBlocked, false, "current policy is re-read, without persisting a new task state");
     renderTaskInterruption(mount, { info: reopened, pending: false, language: "en", onResume() {} });

@@ -114,7 +114,9 @@ async function financeHeader() {
     };
     const action = button(content, ".echoink-module-handoff");
     action.click();
-    assert.equal(action.textContent, "交给 最新通才");
+    assert.equal(action.textContent, "分析 2 月收支", "header action follows the workspace month, not a fixed owner phrase");
+    assert.equal(action.getAttribute("aria-label"), "分析 2 月收支 · 最新通才");
+    assert.ok(action.querySelector(".echoink-module-owner-avatar"), "owner avatar rides on the action");
     assert.equal(action.getAttribute("aria-busy"), "true");
     action.click(); assert.equal(attempts, 1, "pending navigation cannot be opened twice");
     reject(new Error("合成打开失败")); await tick();
@@ -122,8 +124,8 @@ async function financeHeader() {
     assert.match(openTestNoticeMessages.at(-1) ?? "", /合成打开失败/u);
     f.plugin.prefillWorkbenchModule = actualPrefill;
     action.click(); await tick();
-    assert.deepEqual(f.calls.at(-1), ["generalist", "帮我看看 2025-02 的收支和预算"]);
-    assert.equal(f.navigation.draft().text, "帮我看看 2025-02 的收支和预算");
+    assert.deepEqual(f.calls.at(-1), ["generalist", "分析 2025-02 的收支与预算执行情况"]);
+    assert.equal(f.navigation.draft().text, "分析 2025-02 的收支与预算执行情况");
     f.registry.moduleOwners.finance = "deleted-owner";
     action.click(); await tick(); assert.equal(f.calls.at(-1)?.[0], "generalist");
     (Platform as any).isDesktopApp = false;

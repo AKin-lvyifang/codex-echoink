@@ -2,7 +2,8 @@ import { normalizeAgentAvatar, normalizeAgentDisplayName } from "../harness/memo
 import { normalizeAgentStyleId } from "./styles";
 import { normalizeAgentPosition } from "./identity";
 import { isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "./persona";
-import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, isUndeletableAgent, setAgentCapabilityGrant, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId, type AgentRegistry } from "./types";
+import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, isUndeletableAgent, setAgentCapabilityGrant, usesDisabledCapabilityList, type AgentDefinition, type AgentModelPreference, type AgentModuleId, type AgentRegistry } from "./types";
+import type { ReasoningEffort } from "../types/app-server";
 import { OFFICIAL_EXPERT_MODULES } from "./expert-capabilities";
 
 export function defaultAgentRegistry(): AgentRegistry {
@@ -37,7 +38,7 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
     // Keep malformed expert markers locked and unavailable, rather than downgrading to editable Agents.
     const expert = normalizeExpertAgentState(agent.expert) ?? (expertKind ? { expertId: id.replace(/^expert-/u, ""), hired: false, packageVersion: "", summary: "", disclosureShown: false, events: [] } : undefined);
     if (expert && (id !== `expert-${expert.expertId}` || !expert.packageVersion.trim())) expert.hired = false;
-    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, ...normalizeAgentPosition(agent, expertKind ? expert?.summary ?? "" : undefined), ...(agent.identityEdited === true ? { identityEdited: true } : {}), ...(id === GENERAL_ASSISTANT_ID ? { companyApprovalMode: agent.companyApprovalMode === "assistant" ? "assistant" as const : "user" as const, ...(agent.companyFolderGrants === false ? { companyFolderGrants: false } : {}) } : {}), styleId: normalizeAgentStyleId(agent.styleId),
+    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, ...normalizeAgentPosition(agent, expertKind ? expert?.summary ?? "" : undefined), ...(agent.identityEdited === true ? { identityEdited: true } : {}), ...(id === GENERAL_ASSISTANT_ID ? { companyApprovalMode: agent.companyApprovalMode === "assistant" ? "assistant" as const : "user" as const } : {}), ...normalizeAgentModelField(agent.model), styleId: normalizeAgentStyleId(agent.styleId),
       ...(expertKind ? { kind: "expert" as const, ...(expert ? { expert } : {}) } : { ...(agent.kind === "custom" ? { kind: "custom" as const } : {}), ...(typeof agent.persona === "string" ? { persona: normalizeAgentPersona(agent.persona) } : {}) }),
       ...(usesDisabledCapabilityList(id)
         ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds), ...(Array.isArray(agent.capabilityIds) ? { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) } : {}) }
@@ -115,6 +116,16 @@ export function normalizeAgentId(value: unknown): string | undefined {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+/** Absent or malformed means the Agent follows the conversation's model. */
+export function normalizeAgentModelField(value: unknown): { model?: AgentModelPreference } {
+  const raw = record(value);
+  const providerSettingsId = typeof raw?.providerSettingsId === "string" ? raw.providerSettingsId.trim() : "";
+  const modelId = typeof raw?.modelId === "string" ? raw.modelId.trim() : "";
+  if (!providerSettingsId || !modelId) return {};
+  const reasoning = REASONING_EFFORTS.find(effort => effort === raw?.reasoning);
+  return { model: { providerSettingsId, modelId, ...(reasoning ? { reasoning } : {}) } };
 }
 function normalizeCapabilityIds(value: unknown): string[] {
   return [...new Set((Array.isArray(value) ? value : [])
